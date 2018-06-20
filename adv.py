@@ -8,9 +8,13 @@ from datasets import MNISTMulti
 import torch as T
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+import torchvision.models as tvmodels
 from util import USE_CUDA, cuda
 from viz import VisdomWindowManager
 from util import addbox
+import os
+
+baseline = os.getenv('BASELINE', 0)
 
 wm = VisdomWindowManager(port=10248)
 
@@ -33,9 +37,14 @@ class TemporaryModule(T.nn.Module):
         self.model = model
 
     def forward(self, x):
-        return self.model(x)[:, 0]
+        y = self.model(x)
+        if y.dim() == 3:
+            return y.squeeze(1)
+        else:
+            return y
 
-model = cuda(DFSGlimpseSingleObjectClassifier())
+#model = cuda(DFSGlimpseSingleObjectClassifier())
+model = cuda(tvmodels.ResNet(tvmodels.resnet.BasicBlock, [2, 2, 2, 2], 10))
 model.load_state_dict(T.load('model.pt'))
 
 s = tf.Session()
@@ -59,20 +68,22 @@ for xs, ys in loader:
     y = ys[0].item()
     preds = s.run(preds_op, feed_dict={x_op: xs})[0]
 
-    ys_by_node = [F.softmax(model.G.nodes[v]['y'], -1)[0].detach().cpu().numpy()
-                  for v in model.G.nodes]
-    gs_by_node = [model.G.nodes[v]['g'][0] for v in model.G.nodes]
-    bs_by_node = [model.update_module.glimpse.rescale(model.G.nodes[v]['b_fix'][0], False)[0].detach().cpu().numpy()
-                  for v in model.G.nodes]
+    if not baseline:
+        ys_by_node = [F.softmax(model.G.nodes[v]['y'], -1)[0].detach().cpu().numpy()
+                      for v in model.G.nodes]
+        gs_by_node = [model.G.nodes[v]['g'][0] for v in model.G.nodes]
+        bs_by_node = [model.update_module.glimpse.rescale(model.G.nodes[v]['b_fix'][0], False)[0].detach().cpu().numpy()
+                      for v in model.G.nodes]
 
     adv_xs, adv_preds = s.run([adv_x_op, adv_preds_op], feed_dict={x_op: xs})
     adv_preds = adv_preds[0]
 
-    adv_ys_by_node = [F.softmax(model.G.nodes[v]['y'], -1)[0].detach().cpu().numpy()
-                      for v in model.G.nodes]
-    adv_gs_by_node = [model.G.nodes[v]['g'][0] for v in model.G.nodes]
-    adv_bs_by_node = [model.update_module.glimpse.rescale(model.G.nodes[v]['b_fix'][0], False)[0].detach().cpu().numpy()
-                      for v in model.G.nodes]
+    if not baseline:
+        adv_ys_by_node = [F.softmax(model.G.nodes[v]['y'], -1)[0].detach().cpu().numpy()
+                          for v in model.G.nodes]
+        adv_gs_by_node = [model.G.nodes[v]['g'][0] for v in model.G.nodes]
+        adv_bs_by_node = [model.update_module.glimpse.rescale(model.G.nodes[v]['b_fix'][0], False)[0].detach().cpu().numpy()
+                          for v in model.G.nodes]
 
     preds_cls = preds.argmax()
     adv_preds_cls = adv_preds.argmax()
@@ -83,24 +94,25 @@ for xs, ys in loader:
     if total % 500 == 0:
         print(total, correct, adv_correct)
 
-        fig, ax = init_canvas(8)
+        if not baseline:
+            fig, ax = init_canvas(8)
 
-        display_image(fig, ax, 0, xs[0], 'original image')
-        display_image(fig, ax, 4, adv_xs[0], 'adversarial image')
-        for i in range(3):
-            cls_by_node = ys_by_node[i].argmax()
-            display_image(fig, ax, 1 + i, gs_by_node[i],
-                          'y=%d (%.2f)' % (cls_by_node, ys_by_node[i][cls_by_node]) +
-                          'y*=%d' % y)
-            addbox(ax[0, 0], bs_by_node[i][:4] * 200, 'red', 5 + 2 * i)
+            display_image(fig, ax, 0, xs[0], 'original image')
+            display_image(fig, ax, 4, adv_xs[0], 'adversarial image')
+            for i in range(3):
+                cls_by_node = ys_by_node[i].argmax()
+                display_image(fig, ax, 1 + i, gs_by_node[i],
+                              'y=%d (%.2f)' % (cls_by_node, ys_by_node[i][cls_by_node]) +
+                              'y*=%d' % y)
+                addbox(ax[0, 0], bs_by_node[i][:4] * 200, 'red', 5 + 2 * i)
 
-            adv_cls_by_node = adv_ys_by_node[i].argmax()
-            display_image(fig, ax, 5 + i, adv_gs_by_node[i],
-                          'y=%d (%.2f)' % (adv_cls_by_node, adv_ys_by_node[i][adv_cls_by_node]) +
-                          'y*=%d' % y)
-            addbox(ax[1, 0], adv_bs_by_node[i][:4] * 200, 'yellow', 5 + 2 * i)
+                adv_cls_by_node = adv_ys_by_node[i].argmax()
+                display_image(fig, ax, 5 + i, adv_gs_by_node[i],
+                              'y=%d (%.2f)' % (adv_cls_by_node, adv_ys_by_node[i][adv_cls_by_node]) +
+                              'y*=%d' % y)
+                addbox(ax[1, 0], adv_bs_by_node[i][:4] * 200, 'yellow', 5 + 2 * i)
 
-        wm.display_mpl_figure(fig, win='viz{}'.format(nviz))
-        nviz += 1
+            wm.display_mpl_figure(fig, win='viz{}'.format(nviz))
+            nviz += 1
 
 print(total, correct, adv_correct)
