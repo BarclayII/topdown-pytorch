@@ -5,11 +5,25 @@ from sklearn.model_selection import GridSearchCV
 import skorch
 from viz import VisdomWindowManager
 from util import USE_CUDA, cuda
+import torchvision.models as tvmodels
+import os
 
 batch_size = 32
 wm = VisdomWindowManager(port=10248)
 
-class Net(skorch.NeuralNet):
+baseline = os.getenv('BASELINE', 0)
+
+class NetWithTwoDatasets(skorch.NeuralNet):
+    def get_split_datasets(self, X, y=None, **fit_params):
+        # Overriding this method to use our own dataloader to change the X
+        # in signature to (train_dataset, valid_dataset)
+        X_train, X_valid = X
+        train = self.get_dataset(X_train, None)
+        valid = self.get_dataset(X_valid, None)
+        return train, valid
+
+
+class Net(NetWithTwoDatasets):
     def __init__(self, **kwargs):
         self.reg_coef_ = kwargs.get('reg_coef', 1e-4)
 
@@ -19,14 +33,6 @@ class Net(skorch.NeuralNet):
     def initialize_criterion(self):
         # Overriding this method to skip initializing criterion as we don't use it.
         pass
-
-    def get_split_datasets(self, X, y=None, **fit_params):
-        # Overriding this method to use our own dataloader to change the X
-        # in signature to (train_dataset, valid_dataset)
-        X_train, X_valid = X
-        train = self.get_dataset(X_train, None)
-        valid = self.get_dataset(X_valid, None)
-        return train, valid
 
     def train_step(self, Xi, yi, **fit_params):
         step = skorch.NeuralNet.train_step(self, Xi, yi, **fit_params)
@@ -136,19 +142,17 @@ mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols
 
 for reg_coef in [0]:
     print('Trying reg coef', reg_coef)
-    net = Net(
+
+    net_kwargs = dict(
             module=DFSGlimpseSingleObjectClassifier,
             criterion=None,
             max_epochs=50,
-            reg_coef=reg_coef,
             optimizer=T.optim.RMSprop,
             #optimizer__weight_decay=1e-4,
             lr=1e-5,
             batch_size=batch_size,
             device='cuda' if USE_CUDA else 'cpu',
             callbacks=[
-                Dump(),
-                skorch.callbacks.Checkpoint(monitor='acc_best'),
                 skorch.callbacks.ProgressBar(postfix_keys=['train_loss', 'valid_loss', 'acc', 'reg']),
                 skorch.callbacks.GradientNormClipping(0.01),
                 #skorch.callbacks.LRScheduler('ReduceLROnPlateau'),
@@ -158,6 +162,21 @@ for reg_coef in [0]:
             iterator_valid=data_generator,
             iterator_valid__shuffle=False,
             )
+    if baseline:
+        net_kwargs.update(dict(
+            criterion=T.nn.CrossEntropyLoss,
+            module=tvmodels.ResNet,
+            module__block=tvmodels.resnet.BasicBlock,
+            module__layers=[2, 2, 2, 2],
+            module__num_classes=10,
+            ))
+        net_kwargs['callbacks'].insert(0, skorch.callbacks.Checkpoint())
+        net = NetWithTwoDatasets(**net_kwargs)
+    else:
+        net_kwargs['callbacks'].insert(0, skorch.callbacks.Checkpoint(monitor='acc_best'))
+        net_kwargs['callbacks'].insert(0, Dump())
+        net_kwargs['reg_coef'] = reg_coef
+        net = Net(**net_kwargs)
 
     #net.fit((mnist_train, mnist_valid), pretrain=True, epochs=50)
-    net.partial_fit((mnist_train, mnist_valid), pretrain=False, epochs=500)
+    net.partial_fit((mnist_train, mnist_valid), epochs=500)

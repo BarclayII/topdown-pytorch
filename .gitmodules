@@ -1,3 +1,3 @@
-[submodule "dgl"]
-	path = dgl
+[submodule "_dgl"]
+	path = _dgl
 	url = git@github.com:zzhang-cn/dgl
