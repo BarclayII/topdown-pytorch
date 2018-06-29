@@ -80,3 +80,12 @@ def iou(a, b):
     a_area = a[..., 2] * a[..., 3]
     b_area = b[..., 2] * b[..., 3]
     return i_area / (a_area + b_area - i_area)
+
+def area(a):
+    return a[..., 2] * a[..., 3]
+
+def huber(x):
+    abs_x = x.abs()
+    sqr_x = x ** 2
+    s = (abs_x > 1).float()
+    return sqr_x * (1 - s) + abs_x * s

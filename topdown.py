@@ -8,6 +8,7 @@ import torch.nn.init as INIT
 import numpy as np
 from dgl.graph import DGLGraph
 import matplotlib.pyplot as plt
+from util import *
 
 def dfs_walk(tree, curr, l):
     if len(tree.succ[curr]) == 0:
@@ -66,6 +67,49 @@ def display_image(fig, ax, i, im, title):
     ax[i // 4, i % 4].imshow(im, cmap='gray', vmin=0, vmax=1)
     ax[i // 4, i % 4].set_title(title, fontsize=6)
 
+class CNN(nn.Module):
+    def __init__(self, **config):
+        nn.Module.__init__(self)
+
+        cnn = config['cnn']
+        input_size = config['input_size']
+        final_pool_size = config['final_pool_size']
+        h_dims = config['h_dims']
+        n_classes = config['n_classes']
+        if cnn == 'resnet':
+            n_layers = config['n_layers']
+            self.cnn = build_resnet_cnn(
+                    n_layers=n_layers,
+                    final_pool_size=final_pool_size,
+                    )
+            self.net_h = nn.Linear(128 * np.prod(final_pool_size), h_dims)
+        else:
+            filters = config['filters']
+            kernel_size = config['kernel_size']
+            self.cnn = build_cnn(
+                    filters=filters,
+                    kernel_size=kernel_size,
+                    final_pool_size=final_pool_size,
+                    )
+            self.net_h = nn.Linear(filters[-1] * np.prod(final_pool_size), h_dims)
+
+        self.net_p = nn.Sequential(
+                nn.Linear(h_dims, h_dims),
+                nn.ReLU(),
+                nn.Linear(h_dims, n_classes),
+                )
+        self.input_size = input_size
+
+    def forward(self, x, pred=False):
+        batch_size = x.shape[0]
+        if pred:
+            rows, cols = self.input_size
+            xx = T.linspace(-1, 1, cols).repeat(rows, 1)
+            yy = T.linspace(-1, 1, rows).view(-1, 1).repeat(1, cols)
+            grid = T.stack([xx, yy], -1)[None].repeat(batch_size, 1, 1, 1)
+            x = F.grid_sample(x, grid)
+        h = self.net_h(self.cnn(x).view(batch_size, -1))
+        return self.net_p(h) if pred else h
 
 class MessageModule(nn.Module):
     def forward(self, src, dst, edge):
@@ -119,24 +163,7 @@ class UpdateModule(nn.Module):
         self.h_to_h = nn.GRUCell(h_dims * 2, h_dims)
         INIT.orthogonal_(self.h_to_h.weight_hh)
 
-        cnn = config['cnn']
-        final_pool_size = config['final_pool_size']
-        if cnn == 'resnet':
-            n_layers = config['n_layers']
-            self.cnn = build_resnet_cnn(
-                    n_layers=n_layers,
-                    final_pool_size=final_pool_size,
-                    )
-            self.net_h = nn.Linear(128 * np.prod(final_pool_size), h_dims)
-        else:
-            filters = config['filters']
-            kernel_size = config['kernel_size']
-            self.cnn = build_cnn(
-                    filters=filters,
-                    kernel_size=kernel_size,
-                    final_pool_size=final_pool_size,
-                    )
-            self.net_h = nn.Linear(filters[-1] * np.prod(final_pool_size), h_dims)
+        self.cnn = config['cnn']
 
         self.max_recur = config.get('max_recur', 1)
         self.h_dims = h_dims
@@ -147,13 +174,16 @@ class UpdateModule(nn.Module):
     def forward(self, node_state, message):
         h, b, y, b_fix = [node_state[k] for k in ['h', 'b', 'y', 'b_fix']]
         batch_size = h.shape[0]
+        new_node = True
 
         if len(message) == 0:
             h_m_avg = h.new(batch_size, self.h_dims).zero_()
         else:
             h_m, b_next = zip(*message)
             h_m_avg = T.stack(h_m).mean(0)
-            b = T.stack(b_next).mean(0) if b_fix is None else b_fix
+            if b_fix is not None:
+                new_node = False
+            b = T.stack(b_next).mean(0) if new_node else b_fix
 
         b_new = b_fix = b
         h_new = h
@@ -161,7 +191,7 @@ class UpdateModule(nn.Module):
         for i in range(self.max_recur):
             b_rescaled, _ = self.glimpse.rescale(b_new[:, None], False)
             g = self.glimpse(self.x, b_rescaled)[:, 0]
-            h_in = T.cat([self.net_h(self.cnn(g).view(batch_size, -1)), h_m_avg], -1)
+            h_in = T.cat([self.cnn(g), h_m_avg], -1)
             h_new = self.h_to_h(h_in, h_new)
 
             db = self.net_b(h_new)
@@ -170,7 +200,21 @@ class UpdateModule(nn.Module):
             y_new = y + dy
             a_new = self.net_a(h_new)
 
-        return {'h': h_new, 'b': b, 'b_next': b_new, 'a': a_new, 'y': y_new, 'g': g, 'b_fix': b_fix, 'db': db}
+        b_rescaled, _ = self.glimpse.rescale(b[:, None], False)
+        b_new_rescaled, _ = self.glimpse.rescale(b_new[:, None], False)
+        b_rescaled = b_rescaled[:, 0]
+        b_new_rescaled = b_new_rescaled[:, 0]
+
+        if new_node:
+            new_area = area(b_new_rescaled)
+            bbox_penalty = (new_area - intersection(b_rescaled, b_new_rescaled)) / (new_area + 1e-6)
+            assert (bbox_penalty < -1e-4).sum().item() == 0
+            bbox_penalty = bbox_penalty.clamp(min=0)
+        else:
+            bbox_penalty = None
+
+        return {'h': h_new, 'b': b, 'b_next': b_new, 'a': a_new, 'y': y_new, 'g': g, 'b_fix': b_fix,
+                'db': db, 'bbox_penalty': bbox_penalty}
 
 def update_local():
     pass
@@ -207,13 +251,14 @@ class DFSGlimpseSingleObjectClassifier(nn.Module):
                  final_pool_size=(2, 2),
                  glimpse_type='gaussian',
                  glimpse_size=(15, 15),
-                 cnn='cnn'
+                 cnn='cnn',
+                 cnn_file='cnn.pt',
                  ):
         nn.Module.__init__(self)
 
         #self.T_MAX_RECUR = kwarg['steps']
 
-        t = nx.balanced_tree(1, 2)
+        t = nx.balanced_tree(2, 2)
         t_uni = nx.bfs_tree(t, 0)
         self.G = DGLGraph(t)
         self.root = 0
@@ -223,26 +268,36 @@ class DFSGlimpseSingleObjectClassifier(nn.Module):
         self.message_module = MessageModule()
         self.G.register_message_func(self.message_module) # default: just copy
 
+        cnnmodule = CNN(
+                cnn=cnn,
+                n_layers=6,
+                h_dims=h_dims,
+                n_classes=n_classes,
+                final_pool_size=final_pool_size,
+                filters=filters,
+                kernel_size=kernel_size,
+                input_size=glimpse_size,
+                )
+        if cnn_file is not None:
+            cnnmodule.load_state_dict(T.load(cnn_file))
+
         #self.update_module = UpdateModule(h_dims, n_classes, glimpse_size)
         self.update_module = UpdateModule(
             glimpse_type=glimpse_type,
             glimpse_size=glimpse_size,
-            n_layers=6,
-            h_dims=h_dims,
-            n_classes=n_classes,
-            final_pool_size=final_pool_size,
-            filters=filters,
-            kernel_size=kernel_size,
-            cnn=cnn,
+            cnn=cnnmodule,
             max_recur=1,    # T_MAX_RECUR
+            n_classes=n_classes,
+            h_dims=h_dims,
         )
         self.G.register_update_func(self.update_module)
 
         self.readout_module = ReadoutModule(h_dims=h_dims, n_classes=n_classes)
         self.G.register_readout_func(self.readout_module)
 
-        self.walk_list = [(0, 1), (1, 2), (2, 1), (1, 0)]
-        #dfs_walk(t_uni, self.root, self.walk_list)
+        #self.walk_list = [(0, 1), (1, 2), (2, 1), (1, 0)]
+        self.walk_list = []
+        dfs_walk(t_uni, self.root, self.walk_list)
 
     def forward(self, x, pretrain=False):
         batch_size = x.shape[0]
