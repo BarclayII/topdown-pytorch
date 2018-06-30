@@ -7,6 +7,7 @@ from viz import VisdomWindowManager
 from util import USE_CUDA, cuda
 import torchvision.models as tvmodels
 import os
+import itertools
 
 batch_size = 32
 wm = VisdomWindowManager(port=10248)
@@ -26,8 +27,10 @@ class NetWithTwoDatasets(skorch.NeuralNet):
 class Net(NetWithTwoDatasets):
     def __init__(self, **kwargs):
         self.reg_coef_ = kwargs.get('reg_coef', 1e-4)
+        self.pen_coef_ = kwargs.get('pen_coef', 1e-4)
 
         del kwargs['reg_coef']
+        del kwargs['pen_coef']
         skorch.NeuralNet.__init__(self, **kwargs)
 
     def initialize_criterion(self):
@@ -37,13 +40,16 @@ class Net(NetWithTwoDatasets):
     def train_step(self, Xi, yi, **fit_params):
         step = skorch.NeuralNet.train_step(self, Xi, yi, **fit_params)
         dbs = [self.module_.G.nodes[v]['db'] for v in self.module_.G.nodes]
+        ps = [self.module_.G.nodes[v]['bbox_penalty'] for v in self.module_.G.nodes]
         reg = self.reg_coef_ * sum(db.norm(2, 1).mean() for db in dbs if db is not None)
-        loss = step['loss'] + reg
+        pen = self.pen_coef_ * sum((p ** 2).mean() for p in ps if p is not None)
+        loss = step['loss'] + pen + reg
         y_pred = step['y_pred']
         acc = self.get_loss(y_pred, yi, training=False)
         self.history.record_batch('max_param', max(p.abs().max().item() for p in self.module_.parameters()))
         self.history.record_batch('acc', acc.item())
         self.history.record_batch('reg', reg.item())
+        self.history.record_batch('pen', pen.item())
         return {
                 'loss': loss,
                 'y_pred': y_pred,
@@ -140,7 +146,7 @@ def data_generator(dataset, batch_size, shuffle):
 mnist_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=True)
 mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=False, mode='valid')
 
-for reg_coef in [0]:
+for reg_coef, pen_coef in itertools.product([0], [1e-1]):
     print('Trying reg coef', reg_coef)
 
     net_kwargs = dict(
@@ -148,12 +154,15 @@ for reg_coef in [0]:
             criterion=None,
             max_epochs=50,
             optimizer=T.optim.RMSprop,
+            optimizer__param_groups=[
+                ('update_module.cnn.*', {'lr': 0}),
+                ],
             #optimizer__weight_decay=1e-4,
-            lr=1e-5,
+            lr=3e-5,
             batch_size=batch_size,
             device='cuda' if USE_CUDA else 'cpu',
             callbacks=[
-                skorch.callbacks.ProgressBar(postfix_keys=['train_loss', 'valid_loss', 'acc', 'reg']),
+                skorch.callbacks.ProgressBar(postfix_keys=['train_loss', 'valid_loss', 'acc', 'reg', 'pen']),
                 skorch.callbacks.GradientNormClipping(0.01),
                 #skorch.callbacks.LRScheduler('ReduceLROnPlateau'),
                 ],
@@ -176,6 +185,7 @@ for reg_coef in [0]:
         net_kwargs['callbacks'].insert(0, skorch.callbacks.Checkpoint(monitor='acc_best'))
         net_kwargs['callbacks'].insert(0, Dump())
         net_kwargs['reg_coef'] = reg_coef
+        net_kwargs['pen_coef'] = pen_coef
         net = Net(**net_kwargs)
 
     #net.fit((mnist_train, mnist_valid), pretrain=True, epochs=50)
