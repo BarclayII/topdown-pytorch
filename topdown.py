@@ -99,17 +99,18 @@ class CNN(nn.Module):
                 nn.Linear(h_dims, n_classes),
                 )
         self.input_size = input_size
+        self.pred = config.get('pred', False)
 
-    def forward(self, x, pred=False):
+    def forward(self, x):
         batch_size = x.shape[0]
-        if pred:
+        if self.pred:
             rows, cols = self.input_size
-            xx = T.linspace(-1, 1, cols).repeat(rows, 1)
-            yy = T.linspace(-1, 1, rows).view(-1, 1).repeat(1, cols)
+            xx = cuda(T.linspace(-1, 1, cols).repeat(rows, 1))
+            yy = cuda(T.linspace(-1, 1, rows).view(-1, 1).repeat(1, cols))
             grid = T.stack([xx, yy], -1)[None].repeat(batch_size, 1, 1, 1)
             x = F.grid_sample(x, grid)
         h = self.net_h(self.cnn(x).view(batch_size, -1))
-        return self.net_p(h) if pred else h
+        return self.net_p(h) if self.pred else h
 
 class MessageModule(nn.Module):
     def forward(self, src, dst, edge):
@@ -207,7 +208,7 @@ class UpdateModule(nn.Module):
 
         if new_node:
             new_area = area(b_new_rescaled)
-            bbox_penalty = (new_area - intersection(b_rescaled, b_new_rescaled)) / (new_area + 1e-6)
+            bbox_penalty = (new_area - intersection(b_rescaled, b_new_rescaled) + 1e-6) / (new_area + 1e-6)
             assert (bbox_penalty < -1e-4).sum().item() == 0
             bbox_penalty = bbox_penalty.clamp(min=0)
         else:

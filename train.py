@@ -154,11 +154,11 @@ for reg_coef, pen_coef in itertools.product([0], [1e-1]):
             criterion=None,
             max_epochs=50,
             optimizer=T.optim.RMSprop,
-            optimizer__param_groups=[
-                ('update_module.cnn.*', {'lr': 0}),
-                ],
+            #optimizer__param_groups=[
+            #    ('update_module.cnn.*', {'lr': 0}),
+            #    ],
             #optimizer__weight_decay=1e-4,
-            lr=3e-5,
+            lr=1e-5,
             batch_size=batch_size,
             device='cuda' if USE_CUDA else 'cpu',
             callbacks=[
@@ -186,6 +186,7 @@ for reg_coef, pen_coef in itertools.product([0], [1e-1]):
         net_kwargs['callbacks'].insert(0, Dump())
         net_kwargs['reg_coef'] = reg_coef
         net_kwargs['pen_coef'] = pen_coef
+        #net_kwargs['module__cnn_file'] = None
         net = Net(**net_kwargs)
 
     #net.fit((mnist_train, mnist_valid), pretrain=True, epochs=50)
