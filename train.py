@@ -57,6 +57,8 @@ class Net(NetWithTwoDatasets):
             ps = [self.module_.G.nodes[v]['bbox_penalty'] for v in self.module_.G.nodes]
             reg = self.reg_coef_ * sum(db.norm(2, 1).mean() for db in dbs if db is not None)
             pen = self.pen_coef_ * sum((p ** 2).mean() for p in ps if p is not None)
+            self.history.record_batch('reg', reg.item())
+            self.history.record_batch('pen', pen.item())
             #return F.cross_entropy(y_pred, y_true)
             y_true = y_true[:, None].expand(batch_size, n_steps)
             return F.cross_entropy(
@@ -165,7 +167,7 @@ for _ in range(5):
                 batch_size=batch_size,
                 device='cuda' if USE_CUDA else 'cpu',
                 callbacks=[
-                    skorch.callbacks.ProgressBar(postfix_keys=['train_loss', 'valid_loss', 'acc']),
+                    skorch.callbacks.ProgressBar(postfix_keys=['train_loss', 'valid_loss', 'acc', 'pen']),
                     skorch.callbacks.GradientNormClipping(0.01),
                     #skorch.callbacks.LRScheduler('ReduceLROnPlateau'),
                     ],
