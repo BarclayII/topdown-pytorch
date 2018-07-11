@@ -1,17 +1,19 @@
 import torch as T
 import skorch
 from torchvision.datasets import MNIST
+from datasets import MNISTMulti
 from topdown import *
 from util import USE_CUDA, cuda
 
 mnist = MNIST('.', download=True)
+#mnist = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=True)
 
 dfs = DFSGlimpseSingleObjectClassifier()
 dfs.load_state_dict(T.load('bigmodel.pt'))
 
 module = cuda(CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kernel_size=(3, 3), final_pool_size=(2, 2), filters=[16, 32, 64, 128, 256], pred=True))
 #module.load_state_dict(T.load('cnn.pt'))
-#module.load_state_dict(dfs.update_module.cnn.state_dict())
+module.load_state_dict(dfs.update_module.cnn.state_dict())
 
 net = skorch.NeuralNetClassifier(
         module=module,
@@ -38,6 +40,8 @@ net = skorch.NeuralNetClassifier(
             skorch.callbacks.Checkpoint('cnntest.pt'),
             ]
         )
-train_data = cuda(mnist.train_data.float()[:, None].repeat(1, 3, 1, 1) / 255.)
-print(module.forward(train_data[0:10]), mnist.train_labels[0:10])
-net.fit(train_data, cuda(mnist.train_labels))
+train_data = mnist.train_data.float()[:, None].repeat(1, 3, 1, 1) / 255.
+#train_labels = mnist.train_labels[:, 0]
+train_labels = mnist.train_labels
+print(module.forward(cuda(train_data[0:10])), train_labels[0:10])
+net.fit(train_data, train_labels)

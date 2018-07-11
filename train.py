@@ -146,7 +146,7 @@ def data_generator(dataset, batch_size, shuffle):
 mnist_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=True)
 mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=False, mode='valid')
 
-for reg_coef, pen_coef in itertools.product([0], [1e-1]):
+for reg_coef, pen_coef in itertools.product([0], [0.1, 0]):
     print('Trying reg coef', reg_coef)
 
     net_kwargs = dict(
@@ -155,7 +155,7 @@ for reg_coef, pen_coef in itertools.product([0], [1e-1]):
             max_epochs=50,
             optimizer=T.optim.RMSprop,
             #optimizer__param_groups=[
-            #    ('update_module.cnn.*', {'lr': 0}),
+            #    ('update_module.cnn.cnn.*', {'lr': 0}),
             #    ],
             #optimizer__weight_decay=1e-4,
             lr=1e-5,
@@ -190,4 +190,4 @@ for reg_coef, pen_coef in itertools.product([0], [1e-1]):
         net = Net(**net_kwargs)
 
     #net.fit((mnist_train, mnist_valid), pretrain=True, epochs=50)
-    net.partial_fit((mnist_train, mnist_valid), epochs=500)
+    net.partial_fit((mnist_train, mnist_valid), epochs=200)

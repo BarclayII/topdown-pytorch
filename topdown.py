@@ -33,7 +33,7 @@ def build_cnn(**config):
             kernel_size,
             padding=tuple((_ - 1) // 2 for _ in kernel_size),
             )
-        INIT.xavier_uniform_(module.weight)
+        #INIT.xavier_uniform_(module.weight)
         INIT.constant_(module.bias, 0)
         cnn_list.append(module)
         if i < len(filters) - 1:
@@ -162,7 +162,7 @@ class UpdateModule(nn.Module):
                 )
 
         self.h_to_h = nn.GRUCell(h_dims * 2, h_dims)
-        INIT.orthogonal_(self.h_to_h.weight_hh)
+        #INIT.orthogonal_(self.h_to_h.weight_hh)
 
         self.cnn = config['cnn']
 
