@@ -191,7 +191,11 @@ class UpdateModule(nn.Module):
 
         for i in range(self.max_recur):
             b_rescaled, _ = self.glimpse.rescale(b_new[:, None], False)
-            g = self.glimpse(self.x, b_rescaled)[:, 0]
+
+            self.b_rescaled = b_rescaled
+            self.b_rescaled.retain_grad()
+
+            g = self.glimpse(self.x, self.b_rescaled)[:, 0]
             h_in = T.cat([self.cnn(g), h_m_avg], -1)
             h_new = self.h_to_h(h_in, h_new)
 
@@ -259,7 +263,7 @@ class DFSGlimpseSingleObjectClassifier(nn.Module):
 
         #self.T_MAX_RECUR = kwarg['steps']
 
-        t = nx.balanced_tree(2, 2)
+        t = nx.balanced_tree(1, 1)
         t_uni = nx.bfs_tree(t, 0)
         self.G = DGLGraph(t)
         self.root = 0
@@ -305,11 +309,11 @@ class DFSGlimpseSingleObjectClassifier(nn.Module):
 
         self.update_module.set_image(x)
         init_states = {
-            'h': x.new(batch_size, self.h_dims).zero_(),
-            'b': x.new(batch_size, self.update_module.glimpse.att_params).zero_(),
-            'b_next': x.new(batch_size, self.update_module.glimpse.att_params).zero_(),
-            'a': x.new(batch_size, 1).zero_(),
-            'y': x.new(batch_size, self.n_classes).zero_(),
+            'h': x.new(batch_size, self.h_dims).zero_().requires_grad_(),
+            'b': x.new(batch_size, self.update_module.glimpse.att_params).zero_().requires_grad_(),
+            'b_next': x.new(batch_size, self.update_module.glimpse.att_params).zero_().requires_grad_(),
+            'a': x.new(batch_size, 1).zero_().requires_grad_(),
+            'y': x.new(batch_size, self.n_classes).zero_().requires_grad_(),
             'g': None,
             'b_fix': None,
             'db': None,

@@ -40,6 +40,9 @@ class Net(NetWithTwoDatasets):
 
     def train_step(self, Xi, yi, **fit_params):
         step = skorch.NeuralNet.train_step(self, Xi, yi, **fit_params)
+
+        #print(self.module_.update_module.b_rescaled.grad)
+
         loss = step['loss']
         y_pred = step['y_pred']
         acc = self.get_loss(y_pred, yi, training=False)
@@ -61,10 +64,11 @@ class Net(NetWithTwoDatasets):
             self.history.record_batch('pen', pen.item())
             #return F.cross_entropy(y_pred, y_true)
             y_true = y_true[:, None].expand(batch_size, n_steps)
-            return F.cross_entropy(
+            loss = F.cross_entropy(
                     y_pred.reshape(batch_size * n_steps, -1),
                     y_true.reshape(-1)
                     ) + reg + pen
+            return loss
         else:
             y_prob, y_cls = y_pred.max(-1)
             _, y_prob_maxind = y_prob.max(-1)
