@@ -197,9 +197,9 @@ for _ in range(5):
         #net.fit((mnist_train, mnist_valid), pretrain=True, epochs=50)
         net.partial_fit((mnist_train, mnist_valid), epochs=50)
 
-    if (reg_coef, pen_coef) not in acc_dict:
-        acc_dict[(reg_coef, pen_coef)] = []
-    acc_dict[(reg_coef, pen_coef)].append(np.array(net.history[:, 'acc_total']))
+        if (reg_coef, pen_coef) not in acc_dict:
+            acc_dict[(reg_coef, pen_coef)] = []
+        acc_dict[(reg_coef, pen_coef)].append(np.array(net.history[:, 'acc_total']))
 
 with open('acc.record', 'wb') as f:
     pickle.dump(acc_dict, f)
