@@ -49,7 +49,7 @@ for i in range(mnist.train_data.shape[0]):
                 b.grad.zero_()
             loss.backward()
             rec[-1]['bgrad'].append(b.grad.cpu().numpy())
-            b = (b - 1e-2 * b.grad).detach()
+            b = (b - 1e-1 * b.grad).detach()
             b.requires_grad = True
             tqdm_obj.set_postfix(loss=np.asscalar(rec[-1]['loss'][-1]))
 
@@ -58,7 +58,7 @@ for i in range(mnist.train_data.shape[0]):
     rec[-1]['pred'] = np.array(rec[-1]['pred'])
     rec[-1]['bgrad'] = np.array(rec[-1]['bgrad'])
 
-    if i % 100 == 0:
+    if i % 100 == 99:
         with open('glimpseopt/%05d.pkl' % i, 'wb') as f:
             pickle.dump(rec, f)
         rec = []
