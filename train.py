@@ -8,6 +8,7 @@ from util import USE_CUDA, cuda
 import torchvision.models as tvmodels
 import os
 import itertools
+import pickle
 
 batch_size = 32
 wm = VisdomWindowManager(port=10248)
@@ -39,17 +40,11 @@ class Net(NetWithTwoDatasets):
 
     def train_step(self, Xi, yi, **fit_params):
         step = skorch.NeuralNet.train_step(self, Xi, yi, **fit_params)
-        dbs = [self.module_.G.nodes[v]['db'] for v in self.module_.G.nodes]
-        ps = [self.module_.G.nodes[v]['bbox_penalty'] for v in self.module_.G.nodes]
-        reg = self.reg_coef_ * sum(db.norm(2, 1).mean() for db in dbs if db is not None)
-        pen = self.pen_coef_ * sum((p ** 2).mean() for p in ps if p is not None)
-        loss = step['loss'] + pen + reg
+        loss = step['loss']
         y_pred = step['y_pred']
         acc = self.get_loss(y_pred, yi, training=False)
         self.history.record_batch('max_param', max(p.abs().max().item() for p in self.module_.parameters()))
         self.history.record_batch('acc', acc.item())
-        self.history.record_batch('reg', reg.item())
-        self.history.record_batch('pen', pen.item())
         return {
                 'loss': loss,
                 'y_pred': y_pred,
@@ -58,12 +53,18 @@ class Net(NetWithTwoDatasets):
     def get_loss(self, y_pred, y_true, X=None, training=False):
         batch_size, n_steps, _ = y_pred.shape
         if training:
+            dbs = [self.module_.G.nodes[v]['db'] for v in self.module_.G.nodes]
+            ps = [self.module_.G.nodes[v]['bbox_penalty'] for v in self.module_.G.nodes]
+            reg = self.reg_coef_ * sum(db.norm(2, 1).mean() for db in dbs if db is not None)
+            pen = self.pen_coef_ * sum((p ** 2).mean() for p in ps if p is not None)
+            self.history.record_batch('reg', reg.item())
+            self.history.record_batch('pen', pen.item())
             #return F.cross_entropy(y_pred, y_true)
             y_true = y_true[:, None].expand(batch_size, n_steps)
             return F.cross_entropy(
                     y_pred.reshape(batch_size * n_steps, -1),
                     y_true.reshape(-1)
-                    )
+                    ) + reg + pen
         else:
             y_prob, y_cls = y_pred.max(-1)
             _, y_prob_maxind = y_prob.max(-1)
@@ -129,6 +130,7 @@ class Dump(skorch.callbacks.Callback):
     def on_epoch_end(self, net, **kwargs):
         print('@', self.epoch, self.correct, '/', self.total)
         acc = self.correct / self.total
+        net.history.record('acc_total', acc)
         if self.best_acc < acc:
             self.best_acc = acc
             net.history.record('acc_best', acc)
@@ -146,47 +148,58 @@ def data_generator(dataset, batch_size, shuffle):
 mnist_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=True)
 mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=False, mode='valid')
 
-for reg_coef, pen_coef in itertools.product([0], [1e-1]):
-    print('Trying reg coef', reg_coef)
+acc_dict = {}
 
-    net_kwargs = dict(
-            module=DFSGlimpseSingleObjectClassifier,
-            criterion=None,
-            max_epochs=50,
-            optimizer=T.optim.RMSprop,
-            optimizer__param_groups=[
-                ('update_module.cnn.*', {'lr': 0}),
-                ],
-            #optimizer__weight_decay=1e-4,
-            lr=3e-5,
-            batch_size=batch_size,
-            device='cuda' if USE_CUDA else 'cpu',
-            callbacks=[
-                skorch.callbacks.ProgressBar(postfix_keys=['train_loss', 'valid_loss', 'acc', 'reg', 'pen']),
-                skorch.callbacks.GradientNormClipping(0.01),
-                #skorch.callbacks.LRScheduler('ReduceLROnPlateau'),
-                ],
-            iterator_train=data_generator,
-            iterator_train__shuffle=True,
-            iterator_valid=data_generator,
-            iterator_valid__shuffle=False,
-            )
-    if baseline:
-        net_kwargs.update(dict(
-            criterion=T.nn.CrossEntropyLoss,
-            module=tvmodels.ResNet,
-            module__block=tvmodels.resnet.BasicBlock,
-            module__layers=[2, 2, 2, 2],
-            module__num_classes=10,
-            ))
-        net_kwargs['callbacks'].insert(0, skorch.callbacks.Checkpoint())
-        net = NetWithTwoDatasets(**net_kwargs)
-    else:
-        net_kwargs['callbacks'].insert(0, skorch.callbacks.Checkpoint(monitor='acc_best'))
-        net_kwargs['callbacks'].insert(0, Dump())
-        net_kwargs['reg_coef'] = reg_coef
-        net_kwargs['pen_coef'] = pen_coef
-        net = Net(**net_kwargs)
+for _ in range(5):
+    for reg_coef, pen_coef in itertools.product([0], [0.1, 0]):
+        print('Trying reg coef', reg_coef)
 
-    #net.fit((mnist_train, mnist_valid), pretrain=True, epochs=50)
-    net.partial_fit((mnist_train, mnist_valid), epochs=500)
+        net_kwargs = dict(
+                module=DFSGlimpseSingleObjectClassifier,
+                criterion=None,
+                max_epochs=50,
+                optimizer=T.optim.RMSprop,
+                #optimizer__param_groups=[
+                #    ('update_module.cnn.cnn.*', {'lr': 0}),
+                #    ],
+                #optimizer__weight_decay=1e-4,
+                lr=1e-5,
+                batch_size=batch_size,
+                device='cuda' if USE_CUDA else 'cpu',
+                callbacks=[
+                    skorch.callbacks.ProgressBar(postfix_keys=['train_loss', 'valid_loss', 'acc', 'pen']),
+                    skorch.callbacks.GradientNormClipping(0.01),
+                    #skorch.callbacks.LRScheduler('ReduceLROnPlateau'),
+                    ],
+                iterator_train=data_generator,
+                iterator_train__shuffle=True,
+                iterator_valid=data_generator,
+                iterator_valid__shuffle=False,
+                )
+        if baseline:
+            net_kwargs.update(dict(
+                criterion=T.nn.CrossEntropyLoss,
+                module=tvmodels.ResNet,
+                module__block=tvmodels.resnet.BasicBlock,
+                module__layers=[2, 2, 2, 2],
+                module__num_classes=10,
+                ))
+            net_kwargs['callbacks'].insert(0, skorch.callbacks.Checkpoint())
+            net = NetWithTwoDatasets(**net_kwargs)
+        else:
+            net_kwargs['callbacks'].insert(0, skorch.callbacks.Checkpoint(monitor='acc_best'))
+            net_kwargs['callbacks'].insert(0, Dump())
+            net_kwargs['reg_coef'] = reg_coef
+            net_kwargs['pen_coef'] = pen_coef
+            #net_kwargs['module__cnn_file'] = None
+            net = Net(**net_kwargs)
+
+        #net.fit((mnist_train, mnist_valid), pretrain=True, epochs=50)
+        net.partial_fit((mnist_train, mnist_valid), epochs=50)
+
+        if (reg_coef, pen_coef) not in acc_dict:
+            acc_dict[(reg_coef, pen_coef)] = []
+        acc_dict[(reg_coef, pen_coef)].append(np.array(net.history[:, 'acc_total']))
+
+with open('acc.record', 'wb') as f:
+    pickle.dump(acc_dict, f)
