@@ -76,11 +76,13 @@ class CNN(nn.Module):
         final_pool_size = config['final_pool_size']
         h_dims = config['h_dims']
         n_classes = config['n_classes']
+        in_channels = config.get('in_channels', 3)
         if cnn == 'resnet':
             n_layers = config['n_layers']
             self.cnn = build_resnet_cnn(
                     n_layers=n_layers,
                     final_pool_size=final_pool_size,
+                    in_channels=in_channels,
                     )
             self.net_h = nn.Linear(128 * np.prod(final_pool_size), h_dims)
         else:
@@ -90,6 +92,7 @@ class CNN(nn.Module):
                     filters=filters,
                     kernel_size=kernel_size,
                     final_pool_size=final_pool_size,
+                    in_channels=in_channels,
                     )
             self.net_h = nn.Linear(filters[-1] * np.prod(final_pool_size), h_dims)
 
@@ -103,14 +106,35 @@ class CNN(nn.Module):
 
     def forward(self, x):
         batch_size = x.shape[0]
-        if self.pred:
-            rows, cols = self.input_size
-            xx = cuda(T.linspace(-1, 1, cols).repeat(rows, 1))
-            yy = cuda(T.linspace(-1, 1, rows).view(-1, 1).repeat(1, cols))
-            grid = T.stack([xx, yy], -1)[None].repeat(batch_size, 1, 1, 1)
-            x = F.grid_sample(x, grid)
         h = self.net_h(self.cnn(x).view(batch_size, -1))
         return self.net_p(h) if self.pred else h
+
+
+class MultiscaleGlimpse(nn.Module):
+    multiplier = cuda(T.FloatTensor(
+            [[1, 1, 1, 1, 1, 1],
+             [1, 1, 2, 2, 2, 2],
+             [1, 1, 3, 3, 3, 3]]
+            ))
+    n_glimpses = 3
+
+    def __init__(self, **config):
+        nn.Module.__init__(self)
+
+        glimpse_type = config['glimpse_type']
+        self.glimpse_size = config['glimpse_size']
+        self.glimpse = create_glimpse(glimpse_type, self.glimpse_size)
+
+    def forward(self, x, b=None):
+        batch_size, n_channels = x.shape[:2]
+        if b is None:
+            # defaults to full canvas
+            b = x.new(batch_size, self.glimpse.att_params).zero_()
+            b, _ = self.glimpse.rescale(b[:, None], False)
+            b = b.repeat(1, 3, 1) * self.multiplier[None]
+        g = self.glimpse(x, b).view(
+                batch_size, self.n_glimpses * n_channels, self.glimpse_size[0], self.glimpse_size[1])
+        return g
 
 class MessageModule(nn.Module):
     def forward(self, src, dst, edge):
