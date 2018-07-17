@@ -86,6 +86,6 @@ def area(a):
 
 def huber(x):
     abs_x = x.abs()
-    sqr_x = x ** 2
+    sqr_x = x ** 2 / 2
     s = (abs_x > 1).float()
-    return sqr_x * (1 - s) + abs_x * s
+    return sqr_x * (1 - s) + (abs_x - 0.5) * s
