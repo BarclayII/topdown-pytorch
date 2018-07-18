@@ -11,10 +11,11 @@ import numpy as np
 #mnist = MNIST('.', download=True)
 mnist = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=True)
 
-module = cuda(CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kernel_size=(3, 3), final_pool_size=(2, 2), filters=[16, 32, 64, 128, 256], pred=True))
-module.load_state_dict(T.load('cnn.pt'))
+glimpse = MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(15, 15))
+module = cuda(CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kernel_size=(3, 3), final_pool_size=(1, 1), filters=[16, 32, 64, 128, 256], pred=True, in_channels=9))
+seq = T.nn.Sequential(glimpse, module)
+seq.load_state_dict(T.load('cnntest.pt'))
 
-glimpse = create_glimpse('gaussian', (15, 15))
 
 rec = []
 
@@ -36,8 +37,10 @@ for i in range(mnist.train_data.shape[0]):
 
     with tqdm.trange(10000) as tqdm_obj:
         for _ in tqdm_obj:
-            br, _ = glimpse.rescale(b[:, None], False)
-            g = glimpse(x, br)[:, 0]
+            #br, _ = glimpse.rescale(b[:, None], False)
+            #g = glimpse(x, br)[:, 0]
+            br, _ = glimpse.glimpse.rescale(b[:, None], False)
+            g = glimpse(x, b)
             cls = module.forward(g)
             loss = F.cross_entropy(cls, y)
 

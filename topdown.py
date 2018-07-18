@@ -130,8 +130,8 @@ class MultiscaleGlimpse(nn.Module):
         if b is None:
             # defaults to full canvas
             b = x.new(batch_size, self.glimpse.att_params).zero_()
-            b, _ = self.glimpse.rescale(b[:, None], False)
-            b = b.repeat(1, 3, 1) * self.multiplier[None]
+        b, _ = self.glimpse.rescale(b[:, None], False)
+        b = b.repeat(1, 3, 1) * self.multiplier[None]
         g = self.glimpse(x, b).view(
                 batch_size, self.n_glimpses * n_channels, self.glimpse_size[0], self.glimpse_size[1])
         return g
