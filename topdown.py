@@ -116,14 +116,19 @@ class MultiscaleGlimpse(nn.Module):
              [1, 1, 2, 2, 2, 2],
              [1, 1, 3, 3, 3, 3]]
             ))
-    n_glimpses = 3
 
     def __init__(self, **config):
         nn.Module.__init__(self)
 
         glimpse_type = config['glimpse_type']
         self.glimpse_size = config['glimpse_size']
+        self.n_glimpses = config['n_glimpses']
         self.glimpse = create_glimpse(glimpse_type, self.glimpse_size)
+
+        self.multiplier = cuda(T.cat([
+            T.ones(self.n_glimpses, 2),
+            T.arange(1, self.n_glimpses + 1).view(-1, 1).repeat(1, 4),
+            ], 1))
 
     def forward(self, x, b=None):
         batch_size, n_channels = x.shape[:2]
@@ -131,7 +136,7 @@ class MultiscaleGlimpse(nn.Module):
             # defaults to full canvas
             b = x.new(batch_size, self.glimpse.att_params).zero_()
         b, _ = self.glimpse.rescale(b[:, None], False)
-        b = b.repeat(1, 3, 1) * self.multiplier[None]
+        b = b.repeat(1, self.n_glimpses, 1) * self.multiplier[None]
         g = self.glimpse(x, b).view(
                 batch_size, self.n_glimpses * n_channels, self.glimpse_size[0], self.glimpse_size[1])
         return g

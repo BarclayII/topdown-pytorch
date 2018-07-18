@@ -11,9 +11,11 @@ mnist = MNIST('.', download=True)
 #dfs = DFSGlimpseSingleObjectClassifier()
 #dfs.load_state_dict(T.load('bigmodel.pt'))
 
+n_glimpses = 3
+
 module = T.nn.Sequential(
-        MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(15, 15)),
-        CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kernel_size=(3, 3), final_pool_size=(1, 1), filters=[16, 32, 64, 128, 256], in_channels=9, pred=True),
+        MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(15, 15), n_glimpses=n_glimpses),
+        CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kernel_size=(3, 3), final_pool_size=(1, 1), filters=[16, 32, 64, 128, 256], in_channels=3 * n_glimpses, pred=True),
         )
 module = cuda(module)
 #module.load_state_dict(T.load('cnn.pt'))

@@ -52,7 +52,7 @@ for i in range(mnist.train_data.shape[0]):
                 b.grad.zero_()
             loss.backward()
             rec[-1]['bgrad'].append(b.grad.cpu().numpy())
-            b = (b - 1e-1 * b.grad).detach()
+            b = (b - 1e-2 * b.grad).detach()
             b.requires_grad = True
             tqdm_obj.set_postfix(loss=np.asscalar(rec[-1]['loss'][-1]))
 
