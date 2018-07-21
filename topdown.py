@@ -25,13 +25,15 @@ def build_cnn(**config):
     kernel_size = config['kernel_size']
     in_channels = config.get('in_channels', 3)
     final_pool_size = config['final_pool_size']
+    groups = config.get('groups', 1)
 
     for i in range(len(filters)):
         module = nn.Conv2d(
-            in_channels if i == 0 else filters[i-1],
-            filters[i],
+            in_channels if i == 0 else filters[i-1] * groups,
+            filters[i] * groups,
             kernel_size,
             padding=tuple((_ - 1) // 2 for _ in kernel_size),
+            groups=groups,
             )
         #INIT.xavier_uniform_(module.weight)
         INIT.constant_(module.bias, 0)
@@ -77,6 +79,7 @@ class CNN(nn.Module):
         h_dims = config['h_dims']
         n_classes = config['n_classes']
         in_channels = config.get('in_channels', 3)
+        groups = config.get('groups', 1)
         if cnn == 'resnet':
             n_layers = config['n_layers']
             self.cnn = build_resnet_cnn(
@@ -93,8 +96,9 @@ class CNN(nn.Module):
                     kernel_size=kernel_size,
                     final_pool_size=final_pool_size,
                     in_channels=in_channels,
+                    groups=groups,
                     )
-            self.net_h = nn.Linear(filters[-1] * np.prod(final_pool_size), h_dims)
+            self.net_h = nn.Linear(filters[-1] * np.prod(final_pool_size) * groups, h_dims)
 
         self.net_p = nn.Sequential(
                 nn.Linear(h_dims, h_dims),

@@ -10,9 +10,10 @@ import numpy as np
 
 #mnist = MNIST('.', download=True)
 mnist = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=True)
+n_glimpses = 3
 
-glimpse = MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(15, 15))
-module = cuda(CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kernel_size=(3, 3), final_pool_size=(1, 1), filters=[16, 32, 64, 128, 256], pred=True, in_channels=9))
+glimpse = MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(15, 15), n_glimpses=n_glimpses)
+module = cuda(CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kernel_size=(3, 3), final_pool_size=(1, 1), filters=[16, 32, 64, 128, 256], pred=True, in_channels=3 * n_glimpses, groups=3))
 seq = T.nn.Sequential(glimpse, module)
 seq.load_state_dict(T.load('cnntest.pt'))
 
