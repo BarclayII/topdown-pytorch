@@ -8,12 +8,18 @@ from util import USE_CUDA, cuda
 mnist = MNIST('.', download=True)
 #mnist = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=True)
 
-dfs = DFSGlimpseSingleObjectClassifier()
-dfs.load_state_dict(T.load('bigmodel.pt'))
+#dfs = DFSGlimpseSingleObjectClassifier()
+#dfs.load_state_dict(T.load('bigmodel.pt'))
 
-module = cuda(CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kernel_size=(3, 3), final_pool_size=(2, 2), filters=[16, 32, 64, 128, 256], pred=True))
+n_glimpses = 1
+
+module = T.nn.Sequential(
+        MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(15, 15), n_glimpses=n_glimpses),
+        CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kernel_size=(3, 3), final_pool_size=(1, 1), filters=[16, 32, 64, 128, 256], in_channels=3 * n_glimpses, pred=True, groups=3),
+        )
+module = cuda(module)
 #module.load_state_dict(T.load('cnn.pt'))
-module.load_state_dict(dfs.update_module.cnn.state_dict())
+#module.load_state_dict(dfs.update_module.cnn.state_dict())
 
 net = skorch.NeuralNetClassifier(
         module=module,
@@ -27,11 +33,11 @@ net = skorch.NeuralNetClassifier(
         #module__filters=[16, 32, 64, 128, 256],
         criterion=T.nn.CrossEntropyLoss,
         max_epochs=50,
-        optimizer=T.optim.SGD,
-        optimizer__param_groups=[
-            ('cnn.*', {'lr': 0}),
-            ('net_h.*', {'lr': 0}),
-            ],
+        optimizer=T.optim.RMSprop,
+        #optimizer__param_groups=[
+        #    ('cnn.*', {'lr': 0}),
+        #    ('net_h.*', {'lr': 0}),
+        #    ],
         lr=3e-5,
         batch_size=32,
         device='cuda' if USE_CUDA else 'cpu',
