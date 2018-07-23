@@ -7,20 +7,23 @@ from util import USE_CUDA, cuda
 import tqdm
 import pickle
 import numpy as np
+import sys
+
+size = int(sys.argv[1])
 
 #mnist = MNIST('.', download=True)
-mnist = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=True)
+mnist = MNISTMulti('.', n_digits=1, backrand=0, image_rows=size, image_cols=size, download=True)
 n_glimpses = 3
 
 glimpse = MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(15, 15), n_glimpses=n_glimpses)
-module = cuda(CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kernel_size=(3, 3), final_pool_size=(1, 1), filters=[16, 32, 64, 128, 256], pred=True, in_channels=3 * n_glimpses, groups=3))
+module = cuda(CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kernel_size=(3, 3), final_pool_size=(1, 1), filters=[16, 32, 64, 128, 256], pred=True, in_channels=3, n_patches=n_glimpses, coalesce_mode='sample'))
 seq = T.nn.Sequential(glimpse, module)
 seq.load_state_dict(T.load('cnntest.pt'))
 
 
 rec = []
 
-for i in range(mnist.train_data.shape[0]):
+for i in range(100):
     x = cuda(mnist.train_data[i:i+1, None].repeat(1, 3, 1, 1).float() / 255.)
     y = cuda(mnist.train_labels[i:i+1, 0])
     b = cuda(T.zeros(1, 6))

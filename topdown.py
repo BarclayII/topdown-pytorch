@@ -79,7 +79,9 @@ class CNN(nn.Module):
         h_dims = config['h_dims']
         n_classes = config['n_classes']
         in_channels = config.get('in_channels', 3)
-        groups = config.get('groups', 1)
+        self.n_patches = config.get('n_patches', 1)
+        # sample, fuse or group
+        self.coalesce_mode = config.get('coalesce_mode', 'sample')
         if cnn == 'resnet':
             n_layers = config['n_layers']
             self.cnn = build_resnet_cnn(
@@ -95,10 +97,10 @@ class CNN(nn.Module):
                     filters=filters,
                     kernel_size=kernel_size,
                     final_pool_size=final_pool_size,
-                    in_channels=in_channels,
-                    groups=groups,
+                    in_channels=in_channels * (self.n_patches if self.coalesce_mode != 'sample' else 1),
+                    groups=self.n_patches if self.coalesce_mode == 'group' else 1,
                     )
-            self.net_h = nn.Linear(filters[-1] * np.prod(final_pool_size) * groups, h_dims)
+            self.net_h = nn.Linear(filters[-1] * np.prod(final_pool_size) * self.n_patches, h_dims)
 
         self.net_p = nn.Sequential(
                 nn.Linear(h_dims, h_dims),
@@ -109,8 +111,15 @@ class CNN(nn.Module):
         self.pred = config.get('pred', False)
 
     def forward(self, x):
-        batch_size = x.shape[0]
-        h = self.net_h(self.cnn(x).view(batch_size, -1))
+        assert x.dim() == 5
+        batch_size, n_patches, n_channels, n_rows, n_cols = x.shape
+        h = self.net_h(
+                self.cnn(
+                    x.view(-1 if self.coalesce_mode == 'sample' else batch_size,
+                           -1 if self.coalesce_mode != 'sample' else n_channels,
+                           n_rows, n_cols)
+                    )
+                .view(batch_size, -1))
         return self.net_p(h) if self.pred else h
 
 
@@ -142,8 +151,9 @@ class MultiscaleGlimpse(nn.Module):
         b, _ = self.glimpse.rescale(b[:, None], False)
         b = b.repeat(1, self.n_glimpses, 1) * self.multiplier[None]
         g = self.glimpse(x, b).view(
-                batch_size, self.n_glimpses * n_channels, self.glimpse_size[0], self.glimpse_size[1])
+                batch_size, self.n_glimpses, n_channels, self.glimpse_size[0], self.glimpse_size[1])
         return g
+
 
 class MessageModule(nn.Module):
     def forward(self, src, dst, edge):
