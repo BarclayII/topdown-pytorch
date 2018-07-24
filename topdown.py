@@ -125,9 +125,10 @@ class CNN(nn.Module):
 
 class MultiscaleGlimpse(nn.Module):
     multiplier = cuda(T.FloatTensor(
-            [[1, 1, 1, 1, 1, 1],
-             [1, 1, 2, 2, 2, 2],
-             [1, 1, 3, 3, 3, 3]]
+            [#[1, 1, 0.5, 0.5, 0.5, 0.5],
+             [1, 1, 1, 1, 1, 1],
+             #[1, 1, 1.5, 1.5, 1.5, 1.5],
+             ]
             ))
 
     def __init__(self, **config):
@@ -137,11 +138,6 @@ class MultiscaleGlimpse(nn.Module):
         self.glimpse_size = config['glimpse_size']
         self.n_glimpses = config['n_glimpses']
         self.glimpse = create_glimpse(glimpse_type, self.glimpse_size)
-
-        self.multiplier = cuda(T.cat([
-            T.ones(self.n_glimpses, 2),
-            T.arange(1, self.n_glimpses + 1).view(-1, 1).repeat(1, 4),
-            ], 1))
 
     def forward(self, x, b=None):
         batch_size, n_channels = x.shape[:2]
