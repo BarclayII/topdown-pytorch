@@ -95,16 +95,16 @@ net_g = cuda(net_g)
 
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
-parser.add_argument('--row', default=100, help='image rows')
-parser.add_argument('--col', default=100, help='image cols')
-parser.add_argument('--n', default=5, help='number of epochs')
+parser.add_argument('--row', default=100, type=int, help='image rows')
+parser.add_argument('--col', default=100, type=int, help='image cols')
+parser.add_argument('--no_alter', action='store_false', help='whether to use alternative training(default: use)')
+parser.add_argument('--n', default=5, type=int, help='number of epochs')
 parser.add_argument('--log_interval', default=10)
 args = parser.parse_args()
 
 mnist_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=True)
-mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=False)
+mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=False, mode='valid')
 
-batch_size = 64
 train_shuffle = True
 
 if args.pretrain:
@@ -117,6 +117,7 @@ else:
     for epoch in range(2 * n_epochs):
         print("Epoch {} starts...".format(epoch))
 
+        batch_size = 64
         train_loader = data_generator(mnist_train, batch_size, train_shuffle)
         if phase == 'What':
             opt = optim.RMSprop(
@@ -129,7 +130,7 @@ else:
             opt = optim.RMSprop(
                 [
                     {'params': net_phi.parameters(), 'lr': 0},
-                    {'params': net_g.parameters(), 'lr': 1e-5}
+                    {'params': net_g.parameters(), 'lr': 1e-4}
                 ]
             )
 
@@ -164,4 +165,24 @@ else:
 
         T.save(net_phi, 'epoch_{}_what.pt'.format(n_epochs))
         T.save(net_g, 'epoch_{}_where.pt'.format(n_epochs))
-        phase = 'Where' if phase is 'What' else 'What'
+        
+        if args.alter:
+            phase = 'Where' if phase is 'What' else 'What'
+
+        batch_size = 256 
+        valid_loader = data_generator(mnist_valid, batch_size, False)
+        cnt = 0
+        hit = 0
+        for x, y, b in valid_loader:
+            g, _ = glimpse.rescale(
+                cuda(b.new(batch_size, g_dims).zero_())[:, None], False)
+            x_glim = glimpse(x, g)[:, 0]
+            g_pred = net_g(x_glim)
+            g, _ = glimpse.rescale(
+                g_pred[:, None], False)
+            x_glim = glimpse(x, g)[:, 0]
+            y_pred = net_phi(x_glim)
+            hit += (y_pred.max(dim=-1)[1] == y).sum().item()
+            cnt += batch_size
+        print("Accuracy on valid set: {}".format(hit * 1.0 / cnt))
+
