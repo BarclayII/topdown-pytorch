@@ -164,5 +164,5 @@ else:
                 hit = 0
                 cnt = 0
 
-        T.save('epoch_{}_what.pt'.format(n_epochs), net_phi)
-        T.save('epoch_{}_where.pt'.format(n_epochs), net_g)
+        T.save(net_phi, 'epoch_{}_what.pt'.format(n_epochs))
+        T.save(net_g, 'epoch_{}_where.pt'.format(n_epochs))
