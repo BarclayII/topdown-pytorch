@@ -125,7 +125,6 @@ else:
                     {'params': net_g.parameters(), 'lr': 0}
                 ]
             )
-            phase = 'Where'
         else:
             opt = optim.RMSprop(
                 [
@@ -133,7 +132,6 @@ else:
                     {'params': net_g.parameters(), 'lr': 1e-5}
                 ]
             )
-            phase = 'What'
 
         sum_loss = 0
         n_batches = len_train // batch_size
@@ -166,3 +164,4 @@ else:
 
         T.save(net_phi, 'epoch_{}_what.pt'.format(n_epochs))
         T.save(net_g, 'epoch_{}_where.pt'.format(n_epochs))
+        phase = 'Where' if phase is 'What' else 'What'
