@@ -95,8 +95,8 @@ net_g = cuda(net_g)
 
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
-parser.add_argument('--row', default=100, type=int, help='image rows')
-parser.add_argument('--col', default=100, type=int, help='image cols')
+parser.add_argument('--row', default=200, type=int, help='image rows')
+parser.add_argument('--col', default=200, type=int, help='image cols')
 parser.add_argument('--no_alter', action='store_false', help='whether to use alternative training(default: use)')
 parser.add_argument('--n', default=5, type=int, help='number of epochs')
 parser.add_argument('--log_interval', default=10)
@@ -166,7 +166,7 @@ else:
         T.save(net_phi, 'epoch_{}_what.pt'.format(n_epochs))
         T.save(net_g, 'epoch_{}_where.pt'.format(n_epochs))
         
-        if args.alter:
+        if not args.no_alter:
             phase = 'Where' if phase is 'What' else 'What'
 
         batch_size = 256 
