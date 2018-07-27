@@ -70,13 +70,16 @@ class WhatModule(nn.Module):
         return h if not readout else self.net_p(h)
 
 class WhereModule(nn.Module):
-    def __init__(self, filters, kernel_size, final_pool_size, h_dims, g_dims):
+    def __init__(self, filters, kernel_size, final_pool_size, h_dims, g_dims, cnn=None):
         super(WhereModule, self).__init__()
-        self.cnn = build_cnn(
-            filters=filters,
-            kernel_size=kernel_size,
-            final_pool_size=final_pool_size
-        )
+        if cnn is None:
+            self.cnn = build_cnn(
+                filters=filters,
+                kernel_size=kernel_size,
+                final_pool_size=final_pool_size
+            )
+        else:
+            self.cnn = cnn
         self.net_g = nn.Sequential(
             nn.Linear(filters[-1] * np.prod(final_pool_size), h_dims),
             nn.ReLU(),
@@ -200,13 +203,28 @@ class ReadoutModule(nn.Module):
         return self.predictor(h_what)
 
 parser = argparse.ArgumentParser(description='Alternative')
-parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
 parser.add_argument('--row', default=200, type=int, help='image rows')
 parser.add_argument('--col', default=200, type=int, help='image cols')
-parser.add_argument('--alter', action='store_true', help='indicates whether to use alternative training or joint training')
 parser.add_argument('--n', default=5, type=int, help='number of epochs')
-parser.add_argument('--log_interval', default=10)
+parser.add_argument('--log_interval', default=10, type=int, help='log interval')
+parser.add_argument('--lr_where', default=2e-4, type=float, help='learning rate of where module')
+parser.add_argument('--port', default=11111, type=int, help='visdom port')
+parser.add_argument('--alter', action='store_true', help='indicates whether to use alternative training or not(joint training)')
+parser.add_argument('--visdom', action='store_true', help='indicates whether to use visdom or not')
+parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
+parser.add_argument('--fix', action='store_true', help='indicates whether to fix CNN or not')
+parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
 args = parser.parse_args()
+exp_setting = 'one_step_n_{}x{}_{}_{:.4f}_{}_{}_{}_{}'.format(args.row, args.col, args.n, args.lr_where,
+                                                              'alter' if args.alter else 'joint',
+                                                              'share' if args.share else 'noshare',
+                                                              'fix' if args.fix else 'finetune',
+                                                              'pretrain' if args.pretrain else 'fromscratch')
+
+if not os.path.exists('logs/'):
+    os.makedirs('logs/')
+if not os.path.exists('logs/{}/'.format(exp_setting)):
+    os.makedirs('logs/{}/'.format(exp_setting))
 
 mnist_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=True)
 mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=False, mode='valid')
@@ -219,14 +237,19 @@ readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
 
 train_shuffle = True
 
+if args.visdom:
+    wm = VisdomWindowManager(port=args.port)
+n_epochs = args.n
+len_train = len(mnist_train)
+len_valid = len(mnist_valid)
+phase = 'What' if args.alter else 'Joint'
+
+loss_arr = []
+acc_arr = []
+
 if args.pretrain:
     pass
 else:
-    wm = VisdomWindowManager(port=10248)
-    n_epochs = args.n
-    len_train = len(mnist_train)
-    len_valid = len(mnist_valid)
-    phase = 'What'
     params = list(builder.parameters()) + list(readout.parameters())
     #opt = T.optim.RMSprop(params, lr=3e-5)
     opt = T.optim.RMSprop(params, lr=1e-3)
@@ -281,12 +304,24 @@ else:
                     statplot = StatPlot(5, 2)
                     for j in range(10):
                         statplot.add_image(sample_imgs[j][0], bboxs=[sample_bboxs[j]])
-                    wm.display_mpl_figure(statplot.fig)
-                    wm.append_mpl_figure_to_sequence('bbox', statplot.fig)
+                    if args.visdom:
+                        wm.display_mpl_figure(statplot.fig)
+                        wm.append_mpl_figure_to_sequence('bbox', statplot.fig)
+                else:
+                    statplot.savefig('logs/{}/epoch_{}.pdf'.format(exp_setting, epoch))
 
-            avg_loss = sum_loss / i
-        print("Loss on valid set: {}".format(avg_loss))
-        print("Accuracy on valid set: {}".format(hit * 1.0 / cnt))
+        avg_loss = sum_loss / i
+    print("Loss on valid set: {}".format(avg_loss))
+    print("Accuracy on valid set: {}".format(hit * 1.0 / cnt))
+    if args.visdom:
         wm.append_scalar('loss', avg_loss)
         wm.append_scalar('acc', hit * 1.0 / cnt)
-    wm.display_mpl_figure_sequence('bbox')
+    else:
+        loss_arr.append(avg_loss)
+        acc_arr.append(hit * 1.0 / cnt)
+
+if not args.visdom:
+    statplot = StatPlot(1, 2)
+    statplot.add_curve(None, [loss_arr], labels=['loss'], title='loss curve', x_label='epoch', y_label='loss')
+    statplot.add_curve(None, [acc_arr], labels=['acc'], title='acc curve', x_label='epoch', y_label='acc')
+    statplot.savefig('logs/{}/curve.pdf'.format(exp_setting))
