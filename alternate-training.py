@@ -226,7 +226,7 @@ else:
     phase = 'What'
     params = list(builder.parameters()) + list(readout.parameters())
     #opt = T.optim.RMSprop(params, lr=3e-5)
-    opt = T.optim.RMSprop(params)
+    opt = T.optim.RMSprop(params, lr=1e-3)
     for epoch in range(2 * n_epochs):
         print("Epoch {} starts...".format(epoch))
 
