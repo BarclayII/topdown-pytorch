@@ -20,7 +20,6 @@ module = cuda(CNN(cnn='cnn', input_size=(15, 15), h_dims=128, n_classes=10, kern
 seq = T.nn.Sequential(glimpse, module)
 seq.load_state_dict(T.load('cnntest.pt'))
 
-
 rec = []
 
 for i in range(100):
@@ -28,6 +27,7 @@ for i in range(100):
     y = cuda(mnist.train_labels[i:i+1, 0])
     b = cuda(T.zeros(1, 6))
     b.requires_grad = True
+    opt = T.optim.RMSprop([b])
 
     rec.append({})
     rec[-1]['i'] = i
@@ -52,13 +52,13 @@ for i in range(100):
             rec[-1]['pred'].append(cls.detach().cpu().numpy())
             rec[-1]['loss'].append(loss.detach().cpu().numpy())
 
-            if b.grad is not None:
-                b.grad.zero_()
+            opt.zero_grad()
             loss.backward()
             rec[-1]['bgrad'].append(b.grad.cpu().numpy())
-            b = (b - 1e-2 * b.grad).detach()
-            b.requires_grad = True
+            opt.step()
             tqdm_obj.set_postfix(loss=np.asscalar(rec[-1]['loss'][-1]))
+            if loss.item() < 0.01:
+                break
 
     rec[-1]['bh'] = np.array(rec[-1]['bh'])
     rec[-1]['loss'] = np.array(rec[-1]['loss'])

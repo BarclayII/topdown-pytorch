@@ -50,4 +50,4 @@ train_data = mnist.train_data.float()[:, None].repeat(1, 3, 1, 1) / 255.
 #train_labels = mnist.train_labels[:, 0]
 train_labels = mnist.train_labels
 print(module.forward(cuda(train_data[0:10])), train_labels[0:10])
-net.fit(train_data, train_labels)
+net.fit(train_data, train_labels, epochs=100)
