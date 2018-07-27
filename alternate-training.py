@@ -112,8 +112,8 @@ class TreeBuilder(nn.Module):
                  final_pool_size=(2, 2),
                  h_dims=128,
                  n_classes=10,
-                 n_branches=2,
-                 n_levels=2,
+                 n_branches=1,
+                 n_levels=1,
                  ):
         super(TreeBuilder, self).__init__()
 
@@ -187,7 +187,7 @@ class TreeBuilder(nn.Module):
 
 
 class ReadoutModule(nn.Module):
-    def __init__(self, h_dims=128, n_classes=10, n_branches=2, n_levels=2):
+    def __init__(self, h_dims=128, n_classes=10, n_branches=1, n_levels=1):
         super(ReadoutModule, self).__init__()
 
         self.predictor = nn.Linear(h_dims, n_classes)
@@ -211,15 +211,18 @@ args = parser.parse_args()
 mnist_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=True)
 mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=False, mode='valid')
 
-builder = cuda(TreeBuilder())
-readout = cuda(ReadoutModule())
+n_branches = 1
+n_levels = 1
+
+builder = cuda(TreeBuilder(n_branches=n_branches, n_levels=n_levels))
+readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
 
 train_shuffle = True
 
 if args.pretrain:
     pass
 else:
-    wm = VisdomWindowManager(port=11111)
+    wm = VisdomWindowManager(port=10248)
     n_epochs = args.n
     len_train = len(mnist_train)
     len_valid = len(mnist_valid)
@@ -272,19 +275,18 @@ else:
                 sum_loss += loss.item()
                 hit += (y_pred.max(dim=-1)[1] == y).sum().item()
                 cnt += batch_size
-                #if i == 0:
-                #    sample_imgs = x[:10]
-                #    sample_gs = g[:10, 0, :]
-                #    sample_bboxs = glimpse_to_xyhw(sample_gs) * 200
-                #    statplot = StatPlot(5, 2)
-                #    for j in range(10):
-                #        statplot.add_image(sample_imgs[j][0], bboxs=[sample_bboxs[j]])
-                #    wm.display_mpl_figure(statplot.fig)
-                #    wm.append_mpl_figure_to_sequence('bbox', statplot.fig)
+                if i == 0:
+                    sample_imgs = x[:10]
+                    sample_bboxs = t[-1].bbox[:10, :4] * 200
+                    statplot = StatPlot(5, 2)
+                    for j in range(10):
+                        statplot.add_image(sample_imgs[j][0], bboxs=[sample_bboxs[j]])
+                    wm.display_mpl_figure(statplot.fig)
+                    wm.append_mpl_figure_to_sequence('bbox', statplot.fig)
 
             avg_loss = sum_loss / i
         print("Loss on valid set: {}".format(avg_loss))
         print("Accuracy on valid set: {}".format(hit * 1.0 / cnt))
-        #wm.append_scalar('loss', avg_loss)
-        #wm.append_scalar('acc', hit * 1.0 / cnt)
-    #wm.display_mpl_figure_sequence('bbox')
+        wm.append_scalar('loss', avg_loss)
+        wm.append_scalar('acc', hit * 1.0 / cnt)
+    wm.display_mpl_figure_sequence('bbox')
