@@ -10,6 +10,8 @@ import sys
 from glimpse import create_glimpse
 from util import cuda
 from datasets import MNISTMulti
+from viz import VisdomWindowManager
+from stats.utils import *
 
 def build_cnn(**config):
     cnn_list = []
@@ -89,7 +91,7 @@ n_classes = 10
 g_dims = glimpse.att_params
 
 net_phi = WhatModule(filters, kernel_size, final_pool_size, h_dims, n_classes)
-net_g = WhereModule(filters, kernel_size, final_pool_size, h_dims, g_dims)
+net_g = WhereModule([16, 32], kernel_size, final_pool_size, h_dims, g_dims)
 net_phi = cuda(net_phi)
 net_g = cuda(net_g)
 
@@ -97,7 +99,7 @@ parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
 parser.add_argument('--row', default=200, type=int, help='image rows')
 parser.add_argument('--col', default=200, type=int, help='image cols')
-parser.add_argument('--no_alter', action='store_false', help='whether to use alternative training(default: use)')
+parser.add_argument('--alter', action='store_true', help='indicates whether to use alternative training or joint training')
 parser.add_argument('--n', default=5, type=int, help='number of epochs')
 parser.add_argument('--log_interval', default=10)
 args = parser.parse_args()
@@ -110,10 +112,11 @@ train_shuffle = True
 if args.pretrain:
     pass
 else:
+    wm = VisdomWindowManager(port=11111)
     n_epochs = args.n
     len_train = len(mnist_train)
     len_valid = len(mnist_valid)
-    phase = 'What'
+    phase = 'What' if args.alter else 'Joint'
     for epoch in range(2 * n_epochs):
         print("Epoch {} starts...".format(epoch))
 
@@ -126,13 +129,22 @@ else:
                     {'params': net_g.parameters(), 'lr': 0}
                 ]
             )
-        else:
+        elif phase = 'Where':
             opt = optim.RMSprop(
                 [
                     {'params': net_phi.parameters(), 'lr': 0},
-                    {'params': net_g.parameters(), 'lr': 1e-4}
+                    {'params': net_g.parameters(), 'lr': 3e-4}
                 ]
             )
+        elif phase = "Joint":
+            opt = optim.RMSprop(
+                [
+                    {'params': net_phi.parameters(), 'lr': 1e-3},
+                    {'params': net_g.parameters(), 'lr': 3e-4}
+                ]
+            )
+        else:
+            assert False
 
         sum_loss = 0
         n_batches = len_train // batch_size
@@ -165,24 +177,43 @@ else:
 
         T.save(net_phi, 'epoch_{}_what.pt'.format(n_epochs))
         T.save(net_g, 'epoch_{}_where.pt'.format(n_epochs))
-        
-        if not args.no_alter:
-            phase = 'Where' if phase is 'What' else 'What'
 
-        batch_size = 256 
+        phase = 'Where' if phase is 'What' else ('What' if phase is 'Where' else phase)
+
+        batch_size = 256
         valid_loader = data_generator(mnist_valid, batch_size, False)
         cnt = 0
         hit = 0
-        for x, y, b in valid_loader:
-            g, _ = glimpse.rescale(
-                cuda(b.new(batch_size, g_dims).zero_())[:, None], False)
-            x_glim = glimpse(x, g)[:, 0]
-            g_pred = net_g(x_glim)
-            g, _ = glimpse.rescale(
-                g_pred[:, None], False)
-            x_glim = glimpse(x, g)[:, 0]
-            y_pred = net_phi(x_glim)
-            hit += (y_pred.max(dim=-1)[1] == y).sum().item()
-            cnt += batch_size
-        print("Accuracy on valid set: {}".format(hit * 1.0 / cnt))
+        sum_loss = 0
+        with T.no_grad():
+            for i, (x, y, b) in enumerate(valid_loader):
+                g, _ = glimpse.rescale(
+                    cuda(b.new(batch_size, g_dims).zero_())[:, None], False)
+                x_glim = glimpse(x, g)[:, 0]
+                g_pred = net_g(x_glim)
+                g, _ = glimpse.rescale(
+                    g_pred[:, None], False)
+                x_glim = glimpse(x, g)[:, 0]
+                y_pred = net_phi(x_glim)
+                loss = F.cross_entropy(
+                    y_pred, y
+                )
+                sum_loss += loss.item()
+                hit += (y_pred.max(dim=-1)[1] == y).sum().item()
+                cnt += batch_size
+                if i == 0:
+                    sample_imgs = x[:10]
+                    sample_gs = g[:10, 0, :]
+                    sample_bboxs = glimpse_to_xyhw(sample_gs) * 200
+                    statplot = StatPlot(5, 2)
+                    for j in range(10):
+                        statplot.add_image(sample_imgs[j][0], bboxs=[sample_bboxs[j]])
+                    wm.display_mpl_figure(statplot.fig)
+                    wm.append_mpl_figure_to_sequence('bbox', statplot.fig)
 
+            avg_loss = sum_loss / i
+        print("Loss on valid set: {}".format(avg_loss))
+        print("Accuracy on valid set: {}".format(hit * 1.0 / cnt))
+        wm.append_scalar('loss', avg_loss)
+        wm.append_scalar('acc', hit * 1.0 / cnt)
+    wm.display_mpl_figure_sequence('bbox')
