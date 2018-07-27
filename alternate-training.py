@@ -112,8 +112,8 @@ class TreeBuilder(nn.Module):
                  final_pool_size=(2, 2),
                  h_dims=128,
                  n_classes=10,
-                 n_branches=2,
-                 n_levels=2,
+                 n_branches=1,
+                 n_levels=1,
                  ):
         super(TreeBuilder, self).__init__()
 
@@ -134,17 +134,19 @@ class TreeBuilder(nn.Module):
         self.net_g = net_g
         self.net_b = net_b
         self.glimpse = glimpse
-        self.n_branches = 2
-        self.n_levels = 2
+        self.n_branches = n_branches
+        self.n_levels = n_levels
         self.g_dims = g_dims
 
     @property
     def n_nodes(self):
-        return self.n_branches ** (self.n_levels + 1) - 1
+        return (self.n_branches ** (self.n_levels + 1) - 1 if self.n_branches > 1
+                else self.n_levels + 1)
 
-    @property
-    def n_internals(self):
-        return self.n_branches ** self.n_levels - 1
+    def noderange(self, level):
+        return range(self.n_branches ** level - 1, self.n_branches ** (l + 1) - 1) \
+                if self.n_branches > 1 \
+                else range(level, level + 1)
 
     def forward(self, x):
         batch_size, n_channels, n_rows, n_cols = x.shape
@@ -155,8 +157,7 @@ class TreeBuilder(nn.Module):
         t[0].b = x.new(batch_size, self.g_dims).zero_()
 
         for l in range(0, self.n_levels + 1):
-            current_level = range(self.n_branches ** l - 1,
-                                  self.n_branches ** (l + 1) - 1)
+            current_level = self.noderange(l)
             b = T.stack([t[i].b for i in current_level], 1)
             bbox, _ = self.glimpse.rescale(b, False)
             g = self.glimpse(x, bbox)
@@ -224,7 +225,8 @@ else:
     len_valid = len(mnist_valid)
     phase = 'What'
     params = list(builder.parameters()) + list(readout.parameters())
-    opt = T.optim.RMSprop(params, lr=3e-5)
+    #opt = T.optim.RMSprop(params, lr=3e-5)
+    opt = T.optim.RMSprop(params)
     for epoch in range(2 * n_epochs):
         print("Epoch {} starts...".format(epoch))
 
@@ -243,7 +245,7 @@ else:
             )
             opt.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(params, 0.01)
+            #nn.utils.clip_grad_norm_(params, 1)
             opt.step()
             sum_loss += loss.item()
             hit += (y_pred.max(dim=-1)[1] == y).sum().item()
