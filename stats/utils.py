@@ -96,6 +96,25 @@ class StatPlot(object):
                     ax.add_patch(rect)
 
     @to_numpy
+    def add_bar(self, xs, ys, x_label=None, y_label=None, title=None, labels=None, loc='upper right'):
+        try:
+            ax = next(self.axs)
+        except StopIteration:
+            print("Too many plots")
+        else:
+            ax.set_xlabel(x_label)
+            ax.set_ylabel(y_label)
+            ax.set_title(title)
+
+            if xs is None:
+                xs = [xs] * len(ys)
+            for x, y, label in zip(xs, ys, labels):
+                if x is None:
+                    x = np.arange(len(y))
+                ax.bar(x, y, label=label)
+            ax.legend(loc=loc)
+
+    @to_numpy
     def add_curve(self, xs, ys, x_label=None, y_label=None, title=None, labels=None, loc='upper right'):
         try:
             ax = next(self.axs)
