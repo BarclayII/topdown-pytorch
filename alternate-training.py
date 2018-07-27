@@ -112,8 +112,8 @@ class TreeBuilder(nn.Module):
                  final_pool_size=(2, 2),
                  h_dims=128,
                  n_classes=10,
-                 n_branches=1,
-                 n_levels=1,
+                 n_branches=2,
+                 n_levels=2,
                  ):
         super(TreeBuilder, self).__init__()
 
@@ -144,7 +144,7 @@ class TreeBuilder(nn.Module):
                 else self.n_levels + 1)
 
     def noderange(self, level):
-        return range(self.n_branches ** level - 1, self.n_branches ** (l + 1) - 1) \
+        return range(self.n_branches ** level - 1, self.n_branches ** (level + 1) - 1) \
                 if self.n_branches > 1 \
                 else range(level, level + 1)
 
