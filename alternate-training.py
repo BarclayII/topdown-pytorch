@@ -31,6 +31,7 @@ def build_cnn(**config):
         INIT.xavier_uniform_(module.weight)
         INIT.constant_(module.bias, 0)
         cnn_list.append(module)
+        cnn_list.append(nn.BatchNorm2d(filters[i]))
         if i < len(filters) - 1:
             cnn_list.append(nn.LeakyReLU())
     cnn_list.append(nn.AdaptiveMaxPool2d(final_pool_size))
@@ -124,14 +125,23 @@ class TreeBuilder(nn.Module):
 
         g_dims = glimpse.att_params
 
-        net_phi = WhatModule(what_filters, kernel_size, final_pool_size, h_dims, n_classes)
-        net_g = WhereModule(where_filters, kernel_size, final_pool_size, h_dims, g_dims)
-        net_b = nn.Sequential(
-                nn.ReLU(),
-                nn.Linear(h_dims, g_dims * n_branches),
+        net_phi = nn.ModuleList(
+                WhatModule(what_filters, kernel_size, final_pool_size, h_dims,
+                           n_classes)
+                for _ in range(n_levels + 1)
                 )
-        net_phi = cuda(net_phi)
-        net_g = cuda(net_g)
+        net_g = nn.ModuleList(
+                WhereModule(where_filters, kernel_size, final_pool_size, h_dims,
+                            g_dims)
+                for _ in range(n_levels + 1)
+                )
+        net_b = nn.ModuleList(
+                nn.Sequential(
+                    nn.ReLU(),
+                    nn.Linear(h_dims, g_dims * n_branches),
+                    )
+                for _ in range(n_levels + 1)
+                )
 
         self.net_phi = net_phi
         self.net_g = net_g
@@ -166,13 +176,14 @@ class TreeBuilder(nn.Module):
             g = self.glimpse(x, bbox)
             n_glimpses = g.shape[1]
             g_flat = g.view(batch_size * n_glimpses, *g.shape[2:])
-            h_where = self.net_g(g_flat, readout=False)
-            delta_b = (self.net_b(h_where)
+            h_where = self.net_g[l](g_flat, readout=False)
+            delta_b = (self.net_b[l](h_where)
                        .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
             new_b = b[:, :, None] + delta_b
+            h_what = h_where
             h_where = h_where.view(batch_size, n_glimpses, *h_where.shape[1:])
-            h_what = self.net_phi(g_flat, readout=False)
-            y = self.net_phi.net_p(h_what).view(batch_size, n_glimpses, -1)
+            #h_what = self.net_phi[l](g_flat, readout=False)
+            y = self.net_phi[l].net_p(h_what).view(batch_size, n_glimpses, -1)
             h_what = h_what.view(batch_size, n_glimpses, *h_what.shape[1:])
 
             for k, i in enumerate(current_level):
@@ -229,8 +240,8 @@ if not os.path.exists('logs/{}/'.format(exp_setting)):
 mnist_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=True)
 mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=False, mode='valid')
 
-n_branches = 1
-n_levels = 1
+n_branches = 2
+n_levels = 2
 
 builder = cuda(TreeBuilder(n_branches=n_branches, n_levels=n_levels))
 readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
@@ -271,7 +282,7 @@ else:
             )
             opt.zero_grad()
             loss.backward()
-            #nn.utils.clip_grad_norm_(params, 1)
+            nn.utils.clip_grad_norm_(params, 0.1)
             opt.step()
             sum_loss += loss.item()
             hit += (y_pred.max(dim=-1)[1] == y).sum().item()
@@ -300,25 +311,29 @@ else:
                 cnt += batch_size
                 if i == 0:
                     sample_imgs = x[:10]
-                    sample_bboxs = t[-1].bbox[:10, :4] * 200
+                    sample_bboxs = glimpse_to_xyhw(t[-1].bbox[:10, :4] * 200)
+                    sample_g = t[-1].g[:10]
                     statplot = StatPlot(5, 2)
+                    statplot_g = StatPlot(5, 2)
                     for j in range(10):
                         statplot.add_image(sample_imgs[j][0], bboxs=[sample_bboxs[j]])
+                        statplot_g.add_image(sample_g[j][0])
                     if args.visdom:
-                        wm.display_mpl_figure(statplot.fig)
-                        wm.append_mpl_figure_to_sequence('bbox', statplot.fig)
+                        wm.display_mpl_figure(statplot.fig, win='viz')
+                        wm.display_mpl_figure(statplot_g.fig, win='vizg')
+                        #wm.append_mpl_figure_to_sequence('bbox', statplot.fig)
                 else:
                     statplot.savefig('logs/{}/epoch_{}.pdf'.format(exp_setting, epoch))
 
         avg_loss = sum_loss / i
-    print("Loss on valid set: {}".format(avg_loss))
-    print("Accuracy on valid set: {}".format(hit * 1.0 / cnt))
-    if args.visdom:
-        wm.append_scalar('loss', avg_loss)
-        wm.append_scalar('acc', hit * 1.0 / cnt)
-    else:
-        loss_arr.append(avg_loss)
-        acc_arr.append(hit * 1.0 / cnt)
+        print("Loss on valid set: {}".format(avg_loss))
+        print("Accuracy on valid set: {}".format(hit * 1.0 / cnt))
+        if args.visdom:
+            wm.append_scalar('loss', avg_loss)
+            wm.append_scalar('acc', hit * 1.0 / cnt)
+        else:
+            loss_arr.append(avg_loss)
+            acc_arr.append(hit * 1.0 / cnt)
 
 if not args.visdom:
     statplot = StatPlot(1, 2)
