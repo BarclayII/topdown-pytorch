@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as INIT
 import torch.optim as optim
+import torchvision
 import numpy as np
 import argparse
 import os
@@ -135,6 +136,14 @@ class TreeBuilder(nn.Module):
                             g_dims)
                 for _ in range(n_levels + 1)
                 )
+        net_b_to_h = nn.ModuleList(
+                nn.Sequential(
+                    nn.Linear(g_dims, h_dims),
+                    nn.ReLU(),
+                    nn.Linear(h_dims, h_dims),
+                    )
+                for _ in range(n_levels + 1)
+                )
         net_b = nn.ModuleList(
                 nn.Sequential(
                     nn.ReLU(),
@@ -146,6 +155,7 @@ class TreeBuilder(nn.Module):
         self.net_phi = net_phi
         self.net_g = net_g
         self.net_b = net_b
+        self.net_b_to_h = net_b_to_h
         self.glimpse = glimpse
         self.n_branches = n_branches
         self.n_levels = n_levels
@@ -171,15 +181,19 @@ class TreeBuilder(nn.Module):
 
         for l in range(0, self.n_levels + 1):
             current_level = self.noderange(l)
+
             b = T.stack([t[i].b for i in current_level], 1)
             bbox, _ = self.glimpse.rescale(b, False)
             g = self.glimpse(x, bbox)
             n_glimpses = g.shape[1]
             g_flat = g.view(batch_size * n_glimpses, *g.shape[2:])
-            h_where = self.net_g[l](g_flat, readout=False)
+            h_where = self.net_g[l](g_flat, readout=False) + \
+                      self.net_b_to_h[l](b.view(batch_size * n_glimpses, self.g_dims))
+
             delta_b = (self.net_b[l](h_where)
                        .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
             new_b = b[:, :, None] + delta_b
+
             h_what = h_where
             h_where = h_where.view(batch_size, n_glimpses, *h_where.shape[1:])
             #h_what = self.net_phi[l](g_flat, readout=False)
@@ -209,8 +223,9 @@ class ReadoutModule(nn.Module):
         self.n_levels = n_levels
 
     def forward(self, t):
-        leaves = t[-self.n_branches ** self.n_levels:]
-        h_what = T.stack([node.h_what for node in leaves], 1).mean(1)
+        #nodes = t[-self.n_branches ** self.n_levels:]
+        nodes = t
+        h_what = T.stack([node.h_what for node in nodes], 1).mean(1)
         return self.predictor(h_what)
 
 parser = argparse.ArgumentParser(description='Alternative')
@@ -263,7 +278,7 @@ if args.pretrain:
 else:
     params = list(builder.parameters()) + list(readout.parameters())
     #opt = T.optim.RMSprop(params, lr=3e-5)
-    opt = T.optim.RMSprop(params, lr=1e-3)
+    opt = T.optim.RMSprop(params, lr=1e-4)
     for epoch in range(2 * n_epochs):
         print("Epoch {} starts...".format(epoch))
 
@@ -311,12 +326,16 @@ else:
                 cnt += batch_size
                 if i == 0:
                     sample_imgs = x[:10]
-                    sample_bboxs = glimpse_to_xyhw(t[-1].bbox[:10, :4] * 200)
+                    sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4] * 200) for k in range(1, len(t))]
                     sample_g = t[-1].g[:10]
                     statplot = StatPlot(5, 2)
                     statplot_g = StatPlot(5, 2)
                     for j in range(10):
-                        statplot.add_image(sample_imgs[j][0], bboxs=[sample_bboxs[j]])
+                        statplot.add_image(
+                                sample_imgs[j][0],
+                                bboxs=[sample_bbox[j] for sample_bbox in sample_bboxs],
+                                clrs=['y', 'y', 'r', 'r', 'r', 'r'],
+                                )
                         statplot_g.add_image(sample_g[j][0])
                     if args.visdom:
                         wm.display_mpl_figure(statplot.fig, win='viz')
