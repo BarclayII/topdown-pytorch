@@ -99,6 +99,7 @@ parser.add_argument('--col', default=200, type=int, help='image cols')
 parser.add_argument('--n', default=5, type=int, help='number of epochs')
 parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--lr_where', default=2e-4, type=float, help='learning rate of where module')
+parser.add_argument('--decay', action='store_true', help='indicates whether to deacy lr where or not')
 parser.add_argument('--port', default=11111, type=int, help='visdom port')
 parser.add_argument('--alter', action='store_true', help='indicates whether to use alternative training or not(joint training)')
 parser.add_argument('--visdom', action='store_true', help='indicates whether to use visdom or not')
@@ -106,11 +107,12 @@ parser.add_argument('--share', action='store_true', help='indicates whether to s
 parser.add_argument('--fix', action='store_true', help='indicates whether to fix CNN or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
 args = parser.parse_args()
-exp_setting = 'one_step_n_{}x{}_{}_{:.4f}_{}_{}_{}_{}'.format(args.row, args.col, args.n, args.lr_where,
+exp_setting = 'one_step_n_{}x{}_{}_{:.4f}_{}_{}_{}_{}{}'.format(args.row, args.col, args.n, args.lr_where,
                                                               'alter' if args.alter else 'joint',
                                                               'share' if args.share else 'noshare',
                                                               'fix' if args.fix else 'finetune',
-                                                              'pretrain' if args.pretrain else 'fromscratch')
+                                                                'pretrain' if args.pretrain else 'fromscratch',
+                                                                '-decay' if args.decay else '')
 
 if not os.path.exists('logs/'):
     os.makedirs('logs/')
@@ -142,7 +144,7 @@ if args.visdom:
 n_epochs = args.n
 len_train = len(mnist_train)
 len_valid = len(mnist_valid)
-phase = 'What' if args.alter else 'Joint'
+phase = ('Where' if args.pretrain else 'What') if args.alter else 'Joint'
 lr_phi = 1e-3
 if args.fix:
     lr_phi = 0
@@ -160,6 +162,7 @@ for epoch in range(n_epochs):
         net_g_params = net_g.net_g.parameters()
     else:
         net_g_params = net_g.parameters()
+
 
     if phase == 'What':
         opt = optim.RMSprop(
@@ -267,6 +270,11 @@ for epoch in range(n_epochs):
     else:
         loss_arr.append(avg_loss)
         acc_arr.append(hit * 1.0 / cnt)
+
+    if args.decay:
+        lr_phi = (lr_phi - 1e-4) * 0.99 + 1e-4
+        lr_g = (lr_g - 1e-4) * 0.5 + 1e-4
+
 
 if not args.visdom:
     statplot = StatPlot(1, 2)
