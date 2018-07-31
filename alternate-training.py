@@ -23,6 +23,7 @@ def F_reg_par_chd(g_par, g_chd):
     """
     Regularization term(Parent-Child)
     """
+    
     pass
 
 def build_cnn(**config):
@@ -360,13 +361,13 @@ for lvl in range(start_lvl, n_levels + 1):
                             sample_imgs[j][0],
                             bboxs=[sample_bbox[j] for sample_bbox in sample_bboxs],
                             clrs=['y', 'y', 'r', 'r', 'r', 'r'],
-                            lws=sample_atts[j] * length
+                            lws=sample_atts[j, 1:] * length
                         )
                         for k in range(length):
                             statplot_g_arr[k].add_image(sample_g_arr[k][j][0], title='att_weight={}'.format(sample_atts[j, k]))
-                    writer.add_image('viz_bbox', fig_to_ndarray_tb(statplot.fig))
+                    writer.add_image('viz_bbox', fig_to_ndarray_tb(statplot.fig), epoch)
                     for k in range(length):
-                        writer.add_image('viz_glim_{}'.format(k), fig_to_ndarray_tb(statplot_g_arr[k].fig))
+                        writer.add_image('viz_glim_{}'.format(k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
                     plt.close('all')
 
         avg_loss = sum_loss / i
