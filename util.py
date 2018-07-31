@@ -89,3 +89,13 @@ def huber(x):
     sqr_x = x ** 2 / 2
     s = (abs_x > 1).float()
     return sqr_x * (1 - s) + (abs_x - 0.5) * s
+
+
+def glimpse_to_channel(glimpse_type='gaussian', glimpse_size=15):
+    from glimpse import create_glimpse
+    glimpse = create_glimpse(glimpse_type, glimpse_size)
+    def func(params):
+        assert params.shape[-1] == 6
+        pass
+    return func
+

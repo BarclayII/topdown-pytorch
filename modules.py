@@ -6,10 +6,19 @@ import torch.optim as optim
 import torchvision
 import numpy as np
 from glimpse import create_glimpse
-from util import cuda
+from util import cuda, area, intersection
 
 def num_nodes(lvl, brch):
     return (brch ** (lvl + 1) - 1) // (brch - 1)
+
+def F_reg_par_chd(g_par, g_chd):
+    """
+    Regularization term(Parent-Child)
+    """
+    chd_area = area(g_chd)
+    bbox_penalty = (chd_area - intersection(g_par, g_chd) + 1e-6) / \
+                   (chd_area + 1e-6)
+    return bbox_penalty.clamp(min=0)
 
 def build_cnn(**config):
     cnn_list = []
@@ -37,19 +46,22 @@ def build_cnn(**config):
 
 
 class WhatModule(nn.Module):
-    def __init__(self, filters, kernel_size, final_pool_size, h_dims, n_classes):
+    def __init__(self, filters, kernel_size, final_pool_size, h_dims, n_classes, cnn=None):
         super(WhatModule, self).__init__()
-        self.cnn = build_cnn(
-            filters=filters,
-            kernel_size=kernel_size,
-            final_pool_size=final_pool_size
-        )
+        if cnn is None:
+            self.cnn = build_cnn(
+                filters=filters,
+                kernel_size=kernel_size,
+                final_pool_size=final_pool_size
+            )
+        else:
+            self.cnn = cnn
         self.net_h = nn.Sequential(
             nn.Linear(filters[-1] * np.prod(final_pool_size), h_dims),
             nn.ReLU(),
             nn.Linear(h_dims, h_dims),
         )
-        self.net_p = nn.Sequential(
+        self.net_p = nn.Sequential( # net_p is preserved
             nn.ReLU(),
             nn.Linear(h_dims * 2, n_classes),
         )
@@ -58,6 +70,7 @@ class WhatModule(nn.Module):
         batch_size = glimpse_kxk.shape[0]
         h = self.net_h(self.cnn(glimpse_kxk).view(batch_size, -1))
         return h if not readout else self.net_p(h)
+
 
 class WhereModule(nn.Module):
     def __init__(self, filters, kernel_size, final_pool_size, h_dims, g_dims, cnn=None):
@@ -96,6 +109,27 @@ class TreeItem(object):
         self.g = g
 
 
+class SelfAttentionModule(nn.Module):
+    def __init__(self, h_dims, a_dims, att_type=None):
+        super(SelfAttentionModule, self).__init__()
+        if att_type is 'tanh':
+            self.net_att = nn.Sequential(
+                nn.Linear(h_dims, a_dims),
+                nn.Tanh(),
+                nn.Linear(a_dims, 1, bias=False)
+            )
+        elif att_type is 'naive':
+            self.net_att = nn.Sequential(
+                nn.Linear(h_dims, 1),
+                nn.LeakyReLU()
+            )
+        else:  # 'mean'
+            self.net_att = lambda x: cuda(T.ones(x.shape[0], 1))
+
+    def forward(self, input):
+        return self.net_att(input)
+
+
 class TreeBuilder(nn.Module):
     def __init__(self,
                  glimpse_size=(15, 15),
@@ -104,9 +138,12 @@ class TreeBuilder(nn.Module):
                  kernel_size=(3, 3),
                  final_pool_size=(2, 2),
                  h_dims=128,
+                 a_dims=50,
                  n_classes=10,
                  n_branches=1,
                  n_levels=1,
+                 att_type='self',
+                 c_reg=0
                  ):
         super(TreeBuilder, self).__init__()
 
@@ -117,11 +154,6 @@ class TreeBuilder(nn.Module):
         net_phi = nn.ModuleList(
                 WhatModule(what_filters, kernel_size, final_pool_size, h_dims,
                            n_classes)
-                for _ in range(n_levels + 1)
-                )
-        net_g = nn.ModuleList(
-                WhereModule(where_filters, kernel_size, final_pool_size, h_dims,
-                            g_dims)
                 for _ in range(n_levels + 1)
                 )
         net_b = nn.ModuleList(
@@ -139,26 +171,18 @@ class TreeBuilder(nn.Module):
                     )
                 for _ in range(n_levels + 1)
                 )
-        net_att = nn.Sequential(
-            nn.Linear(h_dims * 2, 1),
-            nn.LeakyReLU(),
-        )
+
         batch_norm = nn.BatchNorm1d(h_dims * 2)
+        self.c_reg = c_reg
         self.batch_norm = batch_norm
         self.net_phi = net_phi
-        self.net_g = net_g
         self.net_b = net_b
         self.net_b_to_h = net_b_to_h
-        self.net_att = net_att
+        self.net_att = SelfAttentionModule(h_dims * 2, a_dims, att_type)
         self.glimpse = glimpse
         self.n_branches = n_branches
         self.n_levels = n_levels
         self.g_dims = g_dims
-
-    @property
-    def n_nodes(self):
-        return (self.n_branches ** (self.n_levels + 1) - 1 if self.n_branches > 1
-                else self.n_levels + 1)
 
     def noderange(self, level):
         return range(self.n_branches ** level - 1, self.n_branches ** (level + 1) - 1) \
@@ -172,6 +196,7 @@ class TreeBuilder(nn.Module):
         # root init
         t[0].b = x.new(batch_size, self.g_dims).zero_()
 
+        reg_loss = 0
         for l in range(0, lvl + 1):
             current_level = self.noderange(l)
 
@@ -202,8 +227,14 @@ class TreeBuilder(nn.Module):
                 if l != lvl:
                     for j in range(self.n_branches):
                         t[i * self.n_branches + j + 1].b = new_b[:, k, j]
+                if l != 0:
+                    for j in range(self.n_branches):
+                        reg_loss = reg_loss + F_reg_par_chd(
+                                t[(i - 1) // self.n_branches].bbox,
+                                t[i].bbox
+                                ).mean()
 
-        return t
+        return t, reg_loss * self.c_reg
 
 
 class ReadoutModule(nn.Module):
@@ -219,7 +250,4 @@ class ReadoutModule(nn.Module):
         nodes = t[:num_nodes(lvl, self.n_branches)]
         att = F.softmax(T.stack([node.att for node in nodes], 1), dim=1)
         h = T.stack([node.h for node in nodes], 1)
-        return self.predictor((h * att).sum(dim=1))
-        #h = T.stack([node.h for node in nodes], 1).mean(1)
-        #return self.predictor(h)
-
+        return self.predictor((h * att).sum(dim=1)), att.squeeze(-1)

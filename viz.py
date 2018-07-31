@@ -5,6 +5,12 @@ from util import *
 import numpy as np
 import cv2
 
+def fig_to_ndarray_tb(fig):
+    fig.canvas.draw()
+    data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    return data
+
 def _fig_to_ndarray(fig):
     fig.canvas.draw()
     data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')

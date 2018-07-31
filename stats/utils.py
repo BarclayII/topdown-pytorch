@@ -3,6 +3,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
+plt.switch_backend('Agg')
 
 def glimpse_to_xyhw(glim_params):
     if isinstance(glim_params, list):
@@ -71,7 +72,11 @@ class StatPlot(object):
         self.fig.savefig(*args, **kwargs)
 
     @to_numpy
-    def add_image(self, fig, x_label=None, y_label=None, title=None, bboxs=None, clrs=None):
+    def add_image(self, fig, x_label=None, y_label=None, title=None, bboxs=None, clrs=None, lws=None):
+        """
+        Args:
+        lws: Linewidths
+        """
         try:
             ax = next(self.axs)
         except StopIteration:
@@ -90,9 +95,11 @@ class StatPlot(object):
             if bboxs:
                 if clrs is None:
                     clrs = ['r'] * len(bboxs)
-                for bbox, clr in zip(bboxs, clrs):
+                if lws is None:
+                    lws = [1 * len(bboxs)]
+                for bbox, clr, lw in zip(bboxs, clrs, lws):
                     x, y, h, w = bbox
-                    rect = patches.Rectangle((x, y), h, w, linewidth=1, edgecolor=clr, facecolor='none')
+                    rect = patches.Rectangle((x, y), h, w, linewidth=lw, edgecolor=clr, facecolor='none')
                     ax.add_patch(rect)
 
     @to_numpy
