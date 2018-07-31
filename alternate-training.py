@@ -195,7 +195,7 @@ class TreeBuilder(nn.Module):
             g = self.glimpse(x, bbox)
             n_glimpses = g.shape[1]
             g_flat = g.view(batch_size * n_glimpses, *g.shape[2:])
-            phi = self.net_g[l](g_flat, readout=False)
+            phi = self.net_phi[l](g_flat, readout=False)
             #self.batch_norm(T.cat([self.net_g[l](g_flat, readout=False),
             #                       b.view(-1, self.g_dims)], dim=-1))
             h_b = self.net_b_to_h[l](b.view(batch_size * n_glimpses, self.g_dims))
@@ -378,7 +378,7 @@ else:
                 loss_arr.append(avg_loss)
                 acc_arr.append(hit * 1.0 / cnt)
 
-            if hit * 1.0 / cnt > 0.9:
+            if hit * 1.0 / cnt > 0.95:
                 if lvl < n_levels:
                     print("Accuracy achieve threshold, entering next level...")
                     break
@@ -387,4 +387,4 @@ else:
             statplot = StatPlot(1, 2)
             statplot.add_curve(None, [loss_arr], labels=['loss'], title='loss curve', x_label='epoch', y_label='loss')
             statplot.add_curve(None, [acc_arr], labels=['acc'], title='acc curve', x_label='epoch', y_label='acc')
-            statplot.savefig('logs/{}/{}/curve.pdf'.format(exp_setting), lvl)
+            statplot.savefig('logs/{}/{}/curve.pdf'.format(exp_setting, lvl))
