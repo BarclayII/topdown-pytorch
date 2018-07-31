@@ -151,14 +151,14 @@ class AttentionModule(nn.Module):
     def __init__(self, h_dims, att_type=None):
         super(AttentionModule, self).__init__()
         self.a_dims = 64
-        self.att_type=att_type
-        if att_type is 'self':
+        self.att_type = att_type
+        if att_type == 'self':
             self.net_att = nn.Sequential(
                 nn.Linear(h_dims, self.a_dims),
                 nn.Tanh(),
                 nn.Linear(self.a_dims, 1, bias=False)
             )
-        elif att_type is 'naive':
+        elif att_type == 'naive':
             self.net_att = nn.Sequential(
                 nn.Linear(h_dims, 1),
                 nn.LeakyReLU()
