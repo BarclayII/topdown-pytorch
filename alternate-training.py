@@ -123,23 +123,24 @@ class TreeItem(object):
 
 class AttentionModule(nn.Module):
     def __init__(self, h_dims, att_type=None):
+        super(AttentionModule, self).__init__()
         a_dims = 64
         if att_type is 'self':
             self.net_att = nn.Sequential(
-                nn.Linear(h_dims * 2, a_dims),
+                nn.Linear(h_dims, a_dims),
                 nn.Tanh(),
                 nn.Linear(a_dims, 1, bias=False)
             )
         elif att_type is 'naive':
             self.net_att = nn.Sequential(
-                nn.Linear(h_dims * 2, a_dims),
+                nn.Linear(h_dims, 1),
                 nn.LeakyReLU()
             )
         else:  # 'mean'
             self.net_att = lambda x: T.ones(x.shape[0], 1)
 
     def forward(self, input):
-        retrun self.net_att(input)
+        return self.net_att(input)
 
 
 class TreeBuilder(nn.Module):
@@ -187,7 +188,6 @@ class TreeBuilder(nn.Module):
         batch_norm = nn.BatchNorm1d(h_dims * 2)
         self.batch_norm = batch_norm
         self.net_phi = net_phi
-        self.net_g = net_g
         self.net_b = net_b
         self.net_b_to_h = net_b_to_h
         self.net_att = AttentionModule(h_dims * 2, att_type)
@@ -328,7 +328,7 @@ for lvl in range(start_lvl, n_levels + 1):
             if i % args.log_interval == 0 and i > 0:
                 avg_loss = sum_loss / args.log_interval
                 sum_loss = 0
-                print('{} phase, Batch {}/{}, loss = {}, acc={}'.format(phase, i, n_batches, avg_loss, hit * 1.0 / cnt))
+                print('Batch {}/{}, loss = {}, acc={}'.format(i, n_batches, avg_loss, hit * 1.0 / cnt))
                 hit = 0
                 cnt = 0
 
@@ -360,13 +360,14 @@ for lvl in range(start_lvl, n_levels + 1):
                             sample_imgs[j][0],
                             bboxs=[sample_bbox[j] for sample_bbox in sample_bboxs],
                             clrs=['y', 'y', 'r', 'r', 'r', 'r'],
-                            lws=sample_atts[j]
+                            lws=sample_atts[j] * length
                         )
                         for k in range(length):
                             statplot_g_arr[k].add_image(sample_g_arr[k][j][0], title='att_weight={}'.format(sample_atts[j, k]))
                     writer.add_image('viz_bbox', fig_to_ndarray_tb(statplot.fig))
                     for k in range(length):
-                        writer.add_image('viz_glim_{}'.format(k), fig_to_ndarray_tb(statplot_g.fig))
+                        writer.add_image('viz_glim_{}'.format(k), fig_to_ndarray_tb(statplot_g_arr[k].fig))
+                    plt.close('all')
 
         avg_loss = sum_loss / i
         print("Loss on valid set: {}".format(avg_loss))
