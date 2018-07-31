@@ -150,12 +150,13 @@ class TreeItem(object):
 class AttentionModule(nn.Module):
     def __init__(self, h_dims, att_type=None):
         super(AttentionModule, self).__init__()
-        a_dims = 64
+        self.a_dims = 64
+        self.att_type=att_type
         if att_type is 'self':
             self.net_att = nn.Sequential(
-                nn.Linear(h_dims, a_dims),
+                nn.Linear(h_dims, self.a_dims),
                 nn.Tanh(),
-                nn.Linear(a_dims, 1, bias=False)
+                nn.Linear(self.a_dims, 1, bias=False)
             )
         elif att_type is 'naive':
             self.net_att = nn.Sequential(
@@ -163,10 +164,13 @@ class AttentionModule(nn.Module):
                 nn.LeakyReLU()
             )
         else:  # 'mean'
-            self.net_att = lambda x: cuda(T.ones(x.shape[0], 1))
+            self.net_att = None 
 
     def forward(self, input):
-        return self.net_att(input)
+        if self.att_type == 'mean':
+            return cuda(T.ones(x.shape[0], 1))
+        else:
+            return self.net_att(input)
 
 
 class TreeBuilder(nn.Module):
