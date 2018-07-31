@@ -276,10 +276,11 @@ class BilinearGlimpse(NN.Module):
         '''
         nsamples, nchan, xrow, xcol = x.size()
         nglims = spatial_att.size()[1]
-        x = x[:, None].contiguous()
+        x = x[:, None].expand(nsamples, nglims, nchan, xrow, xcol).contiguous()
         crow, ccol = self.glim_size
 
         cx, cy, w, h = T.unbind(spatial_att, -1)
+        '''
         cx = cx * xcol
         cy = cy * xrow
         w = w * xcol
@@ -309,6 +310,30 @@ class BilinearGlimpse(NN.Module):
         bilin = by.permute(0, 2, 1) @ x.view(-1, xrow, xcol) @ ax
 
         return bilin.view(nsamples, nglims, nchan, crow, ccol)
+        '''
+        cx = cx * 2 - 1
+        cy = cy * 2 - 1
+        w = w * 2
+        h = h * 2
+        dx = w / (ccol - 1)
+        dy = h / (crow - 1)
+
+        cx = cx[:, :, None]
+        cy = cy[:, :, None]
+        dx = dx[:, :, None]
+        dy = dy[:, :, None]
+
+        mx = cx + dx * (tovar(T.arange(ccol))[None, None, :] - (ccol - 1) / 2)
+        my = cy + dy * (tovar(T.arange(crow))[None, None, :] - (crow - 1) / 2)
+
+        mx = mx.view(-1, 1, ccol).expand(-1, crow, ccol)
+        my = my.view(-1, crow, 1).expand(-1, crow, ccol)
+        mxy = T.stack([mx, my], -1)
+
+        x = x.view(-1, nchan, xrow, xcol)
+        bilin = F.grid_sample(x, mxy)
+        return bilin.view(nsamples, nglims, nchan, crow, ccol)
+
 
     @classmethod
     def absolute_to_relative(cls, att, absolute):
