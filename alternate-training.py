@@ -195,7 +195,7 @@ class TreeBuilder(nn.Module):
             g = self.glimpse(x, bbox)
             n_glimpses = g.shape[1]
             g_flat = g.view(batch_size * n_glimpses, *g.shape[2:])
-            phi = self.net_g[l](g_flat, readout=False)
+            phi = self.net_phi[l](g_flat, readout=False)
             #self.batch_norm(T.cat([self.net_g[l](g_flat, readout=False),
             #                       b.view(-1, self.g_dims)], dim=-1))
             h_b = self.net_b_to_h[l](b.view(batch_size * n_glimpses, self.g_dims))
@@ -296,13 +296,14 @@ acc_arr = []
 if args.pretrain:
     pass
 else:
-    start_lvl = n_levels
-    if args.schedule:
-        start_lvl = 1
-    for lvl in range(start_lvl, n_levels + 1):
+    #start_lvl = n_levels
+    #if args.schedule:
+    #    start_lvl = 1
+    for epoch in range(n_epochs):
         params = list(builder.parameters()) + list(readout.parameters())
         opt = T.optim.RMSprop(params, lr=1e-4)
-        for epoch in range(n_epochs):
+        start_lvl = 1 if args.schedule else n_levels
+        for lvl in range(start_lvl, n_levels + 1):
             print("Epoch {} starts...".format(epoch))
 
             batch_size = 64
