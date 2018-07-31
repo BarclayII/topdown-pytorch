@@ -16,6 +16,8 @@ from tensorboardX import SummaryWriter
 from stats.utils import *
 import tqdm
 
+thres = [0.6, 0.95, 0.98, 0.98, 0.98]
+
 def num_nodes(lvl, brch):
     return (brch ** (lvl + 1) - 1) // (brch - 1)
 
@@ -23,8 +25,31 @@ def F_reg_par_chd(g_par, g_chd):
     """
     Regularization term(Parent-Child)
     """
-    
-    pass
+    return (
+        F.relu(
+            (g_par[..., 0] - g_par[..., 2]) - (g_chd[..., 0] - g_chd[..., 2])
+        ) + 
+        F.relu(
+            (g_chd[..., 0] + g_chd[..., 2]) - (g_par[..., 0] + g_par[..., 2])
+        ) + 
+        F.relu(
+            (g_par[..., 0] - g_par[..., 4]) - (g_chd[..., 0] - g_chd[..., 4])
+        ) + 
+        F.relu(
+            (g_chd[..., 0] + g_chd[..., 4]) - (g_par[..., 0] + g_par[..., 4])
+        ) + 
+        F.relu(
+            (g_par[..., 1] - g_par[..., 3]) - (g_chd[..., 1] - g_chd[..., 3])
+        ) + 
+        F.relu(
+            (g_chd[..., 1] + g_chd[..., 3]) - (g_par[..., 1] + g_par[..., 3])
+        ) + 
+        F.relu(
+            (g_par[..., 1] - g_par[..., 5]) - (g_chd[..., 1] - g_chd[..., 5])
+        ) + 
+        F.relu(
+            (g_chd[..., 1] + g_chd[..., 5]) - (g_par[..., 1] + g_par[..., 5])
+        )).sum()
 
 def build_cnn(**config):
     cnn_list = []
@@ -138,7 +163,7 @@ class AttentionModule(nn.Module):
                 nn.LeakyReLU()
             )
         else:  # 'mean'
-            self.net_att = lambda x: T.ones(x.shape[0], 1)
+            self.net_att = lambda x: cuda(T.ones(x.shape[0], 1))
 
     def forward(self, input):
         return self.net_att(input)
@@ -155,7 +180,8 @@ class TreeBuilder(nn.Module):
                  n_classes=10,
                  n_branches=1,
                  n_levels=1,
-                 att_type=None
+                 att_type=None,
+                 c_reg=0
                  ):
         super(TreeBuilder, self).__init__()
         assert att_type is not None
@@ -187,6 +213,7 @@ class TreeBuilder(nn.Module):
                 )
 
         batch_norm = nn.BatchNorm1d(h_dims * 2)
+        self.c_reg = c_reg
         self.batch_norm = batch_norm
         self.net_phi = net_phi
         self.net_b = net_b
@@ -214,6 +241,7 @@ class TreeBuilder(nn.Module):
         # root init
         t[0].b = x.new(batch_size, self.g_dims).zero_()
 
+        reg_loss = 0
         for l in range(0, lvl + 1):
             current_level = self.noderange(l)
 
@@ -241,8 +269,9 @@ class TreeBuilder(nn.Module):
                 if l != lvl:
                     for j in range(self.n_branches):
                         t[i * self.n_branches + j + 1].b = new_b[:, k, j]
+                        reg_loss += self.c_reg * F_reg_par_chd(b[:, k], new_b[:, k, j])
 
-        return t
+        return t, reg_loss
 
 
 class ReadoutModule(nn.Module):
@@ -262,6 +291,7 @@ class ReadoutModule(nn.Module):
 
 
 parser = argparse.ArgumentParser(description='Alternative')
+parser.add_argument('--resume', default=None, help='resume training from checkpoint')
 parser.add_argument('--row', default=200, type=int, help='image rows')
 parser.add_argument('--col', default=200, type=int, help='image cols')
 parser.add_argument('--n', default=100, type=int, help='number of epochs')
@@ -271,12 +301,12 @@ parser.add_argument('--pretrain', action='store_true', help='pretrain or not pre
 parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
 parser.add_argument('--att_type', default='naive', type=str, help='attention type: mean/naive/self')
 parser.add_argument('--clip', default=0.1, type=float, help='gradient clipping norm')
-parser.add_argument('--reg', default=0.1, type=float, help='regularization parameter')
+parser.add_argument('--reg', default=0, type=float, help='regularization parameter')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 args = parser.parse_args()
-expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items())
+expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if k is not 'resume')
 
 writer = SummaryWriter('runs/{}'.format(expr_setting))
 mnist_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=True)
@@ -285,7 +315,10 @@ mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image
 n_branches = args.branches
 n_levels = args.levels
 
-builder = cuda(TreeBuilder(n_branches=n_branches, n_levels=n_levels, att_type=args.att_type))
+if args.resume is not None:
+    pass  # TODO
+
+builder = cuda(TreeBuilder(n_branches=n_branches, n_levels=n_levels, att_type=args.att_type, c_reg=args.reg))
 readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
 
 train_shuffle = True
@@ -301,24 +334,23 @@ start_lvl = n_levels
 if args.schedule:
     start_lvl = 0
 for lvl in range(start_lvl, n_levels + 1):
+    print("Level {} start...".format(lvl))
     params = list(builder.parameters()) + list(readout.parameters())
     opt = T.optim.RMSprop(params, lr=1e-4)
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
-
         batch_size = 64
         train_loader = data_generator(mnist_train, batch_size, train_shuffle)
-
         sum_loss = 0
         n_batches = len_train // batch_size
         hit = 0
         cnt = 0
         for i, (x, y, b) in enumerate(train_loader):
-            t = builder(x, lvl)
+            t, loss_reg = builder(x, lvl)
             y_pred, _ = readout(t, lvl)
             loss = F.cross_entropy(
                 y_pred, y
-            )
+            ) + loss_reg
             opt.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(params, args.clip)
@@ -340,7 +372,7 @@ for lvl in range(start_lvl, n_levels + 1):
         sum_loss = 0
         with T.no_grad():
             for i, (x, y, b) in enumerate(valid_loader):
-                t = builder(x, lvl)
+                t, _ = builder(x, lvl)
                 y_pred, att_weights = readout(t, lvl)
                 loss = F.cross_entropy(
                     y_pred, y
@@ -365,19 +397,27 @@ for lvl in range(start_lvl, n_levels + 1):
                         )
                         for k in range(length):
                             statplot_g_arr[k].add_image(sample_g_arr[k][j][0], title='att_weight={}'.format(sample_atts[j, k]))
-                    writer.add_image('viz_bbox', fig_to_ndarray_tb(statplot.fig), epoch)
+                    writer.add_image('Image/{}/viz_bbox'.format(lvl), fig_to_ndarray_tb(statplot.fig), epoch)
                     for k in range(length):
-                        writer.add_image('viz_glim_{}'.format(k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
+                        writer.add_image('Image/{}/viz_glim_{}'.format(lvl, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
                     plt.close('all')
 
         avg_loss = sum_loss / i
+        acc = hit * 1.0 / cnt
         print("Loss on valid set: {}".format(avg_loss))
-        print("Accuracy on valid set: {}".format(hit * 1.0 / cnt))
+        print("Accuracy on valid set: {}".format(acc))
 
-        writer.add_scalar('data/loss', avg_loss, epoch)
-        writer.add_scalar('data/accuracy', hit * 1.0 / cnt, epoch)
+        writer.add_scalar('data/{}/loss'.format(lvl), avg_loss, epoch)
+        writer.add_scalar('data/{}/accuracy'.format(lvl), acc, epoch)
 
-        if hit * 1.0 / cnt > 0.95:
+        if (epoch + 1) % 10 == 0:
+            print('Save checkpoint...')
+            if not os.path.exists('checkpoints/'):
+                os.makedirs('checkpoints')
+            T.save(builder, 'checkpoints/builder_{}_{}.pt'.format(lvl, epoch))
+            T.save(readout, 'checkpoints/readout_{}_{}.pt'.format(lvl, epoch))
+
+        if acc > thres[lvl]:
             if lvl < n_levels:
                 print("Accuracy achieve threshold, entering next level...")
                 break

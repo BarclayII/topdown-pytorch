@@ -3,6 +3,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
+plt.switch_backend('Agg')
 
 def glimpse_to_xyhw(glim_params):
     if isinstance(glim_params, list):
