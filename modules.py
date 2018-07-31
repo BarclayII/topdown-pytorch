@@ -110,7 +110,7 @@ class TreeBuilder(nn.Module):
                  ):
         super(TreeBuilder, self).__init__()
 
-        glimpse = create_glimpse('gaussian', glimpse_size)
+        glimpse = create_glimpse('bilinear', glimpse_size)
 
         g_dims = glimpse.att_params
 
