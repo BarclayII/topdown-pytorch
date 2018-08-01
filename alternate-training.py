@@ -33,6 +33,7 @@ parser.add_argument('--resume', default=None, help='resume training from checkpo
 parser.add_argument('--row', default=200, type=int, help='image rows')
 parser.add_argument('--col', default=200, type=int, help='image cols')
 parser.add_argument('--n', default=100, type=int, help='number of epochs')
+parser.add_argument('--batch_size', default=64, type=int, help='batch size')
 parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
@@ -42,6 +43,7 @@ parser.add_argument('--clip', default=0.1, type=float, help='gradient clipping n
 parser.add_argument('--reg', default=0, type=float, help='regularization parameter')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
+parser.add_argument('--rank', default=False, type=bool, help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 args = parser.parse_args()
 expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if k is not 'resume')
@@ -62,33 +64,48 @@ readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
 train_shuffle = True
 
 n_epochs = args.n
+batch_size = args.batch_size
+
 len_train = len(mnist_train)
 len_valid = len(mnist_valid)
 
 loss_arr = []
 acc_arr = []
 
-start_lvl = n_levels
-if args.schedule:
-    start_lvl = 0
-for lvl in range(start_lvl, n_levels + 1):
-    print("Level {} start...".format(lvl))
+def rank_loss(a, b):
+    return T.sigmoid(b - a)
+
+for epoch in range(n_epochs):
+    print("Epoch {} starts...".format(epoch))
     params = list(builder.parameters()) + list(readout.parameters())
     opt = T.optim.RMSprop(params, lr=1e-4)
-    for epoch in range(n_epochs):
-        print("Epoch {} starts...".format(epoch))
-        batch_size = 64
+
+    start_lvl = 0 if args.schedule else n_levels
+    for i, (x, y, b) in enumerate(train_loader):
         train_loader = data_generator(mnist_train, batch_size, train_shuffle)
         sum_loss = 0
         n_batches = len_train // batch_size
         hit = 0
         cnt = 0
-        for i, (x, y, b) in enumerate(train_loader):
+
+        for lvl in range(start_lvl, n_levels + 1):
+            #TODO: comment out for now; too frequent printing
+            #print("Level {} start...".format(lvl))
             t, loss_reg = builder(x, lvl)
             y_pred, _ = readout(t, lvl)
+
             loss = F.cross_entropy(
                 y_pred, y
             ) + loss_reg
+
+            if arg.rank and lvl > start_lvl:
+                # don't backprop into the last step
+                y_pred_last.detach()
+                loss_rank = rank_loss(y_pred, y_pred_last)
+            y_pred_last = y_pred
+
+            loss += loss_rank
+
             opt.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(params, args.clip)
@@ -96,15 +113,17 @@ for lvl in range(start_lvl, n_levels + 1):
             sum_loss += loss.item()
             hit += (y_pred.max(dim=-1)[1] == y).sum().item()
             cnt += batch_size
-            if i % args.log_interval == 0 and i > 0:
-                avg_loss = sum_loss / args.log_interval
-                sum_loss = 0
-                print('Batch {}/{}, loss = {}, acc={}'.format(i, n_batches, avg_loss, hit * 1.0 / cnt))
-                hit = 0
-                cnt = 0
 
-        batch_size = 256
-        valid_loader = data_generator(mnist_valid, batch_size, False)
+        if i % args.log_interval == 0 and i > 0:
+            avg_loss = sum_loss / args.log_interval
+            sum_loss = 0
+            print('Batch {}/{}, loss = {}, acc={}'.format(i, n_batches, avg_loss, hit * 1.0 / cnt))
+            hit = 0
+            cnt = 0
+
+        # TODO: v_batch_size probably should take from argparse
+        v_batch_size = 256
+        valid_loader = data_generator(mnist_valid, v_batch_size, False)
         cnt = 0
         hit = 0
         sum_loss = 0
