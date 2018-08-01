@@ -80,117 +80,124 @@ acc_arr = []
 def rank_loss(a, b, margin=0):
     return (b - a + margin).clamp(min=0).mean()
 
-for epoch in range(n_epochs):
-    print("Epoch {} starts...".format(epoch))
-    params = list(builder.parameters()) + list(readout.parameters())
-    opt = T.optim.RMSprop(params, lr=1e-4)
+@profile
+def train():
+    for epoch in range(n_epochs):
+        print("Epoch {} starts...".format(epoch))
+        params = list(builder.parameters()) + list(readout.parameters())
+        opt = T.optim.RMSprop(params, lr=1e-4)
 
-    start_lvl = 0 if args.schedule else n_levels
-    train_loader = data_generator(mnist_train, batch_size, train_shuffle)
-    sum_loss = 0
-    n_batches = len_train // batch_size
-    hit = 0
-    cnt = 0
-    levelwise_hit = np.zeros(n_levels + 1)
+        start_lvl = 0 if args.schedule else n_levels
+        train_loader = data_generator(mnist_train, batch_size, train_shuffle)
+        sum_loss = 0
+        n_batches = len_train // batch_size
+        hit = 0
+        cnt = 0
+        levelwise_hit = np.zeros(n_levels + 1)
 
-    for i, (x, y, b) in enumerate(train_loader):
-        total_loss = 0
-
-        for lvl in range(start_lvl, n_levels + 1):
-            #TODO: comment out for now; too frequent printing
-            #print("Level {} start...".format(lvl))
-            t, loss_reg = builder(x, lvl)
-            y_pred, _ = readout(t, lvl)
-            y_score = y_pred.gather(1, y[:, None])[:, 0]
-
-            ce_loss = F.cross_entropy(y_pred, y)
-            loss = ce_loss + loss_reg
-
-            if args.rank and lvl > start_lvl:
-                loss_rank = rank_loss(y_score, y_score_last)
-                loss = loss + loss_rank
-            y_score_last = y_score
-
-            total_loss = total_loss + loss
-            levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
-
-        opt.zero_grad()
-        total_loss.backward()
-        nn.utils.clip_grad_norm_(params, args.clip)
-        opt.step()
-        sum_loss += total_loss.item()
-        hit = levelwise_hit[-1]
-        cnt += batch_size
-
-        if i % args.log_interval == 0 and i > 0:
-            avg_loss = sum_loss / args.log_interval
-            sum_loss = 0
-            print('Batch {}/{}, loss = {}, acc={}'.format(i, n_batches, avg_loss, hit * 1.0 / cnt))
-            hit = 0
-            cnt = 0
-            levelwise_hit *= 0
-
-    # TODO: v_batch_size probably should take from argparse
-    v_batch_size = 256
-    valid_loader = data_generator(mnist_valid, v_batch_size, False)
-    cnt = 0
-    hit = 0
-    levelwise_hit = np.zeros(n_levels + 1)
-    sum_loss = 0
-    with T.no_grad():
-        for i, (x, y, b) in enumerate(valid_loader):
+        for i, (x, y, b) in enumerate(train_loader):
             total_loss = 0
+
+            t, loss_reg = builder(x)
+            readout_list = readout(t)
+
             for lvl in range(start_lvl, n_levels + 1):
-                t, _ = builder(x, lvl)
-                y_pred, att_weights = readout(t, lvl)
-                loss = F.cross_entropy(
-                    y_pred, y
-                )
-                total_loss += loss
+                y_pred, _ = readout_list[lvl]
+                y_score = y_pred.gather(1, y[:, None])[:, 0]
+
+                ce_loss = F.cross_entropy(y_pred, y)
+                loss = ce_loss + loss_reg
+
+                if args.rank and lvl > start_lvl:
+                    loss_rank = rank_loss(y_score, y_score_last)
+                    loss = loss + loss_rank
+                y_score_last = y_score
+
+                total_loss = total_loss + loss
                 levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
 
+            opt.zero_grad()
+            total_loss.backward()
+            nn.utils.clip_grad_norm_(params, args.clip)
+            opt.step()
             sum_loss += total_loss.item()
             hit = levelwise_hit[-1]
             cnt += batch_size
 
-            lvl = n_levels
+            if i % args.log_interval == 0 and i > 0:
+                avg_loss = sum_loss / args.log_interval
+                sum_loss = 0
+                print('Batch {}/{}, loss = {}, acc={}'.format(i, n_batches, avg_loss, hit * 1.0 / cnt))
+                hit = 0
+                cnt = 0
+                levelwise_hit *= 0
 
-            if i == 0:
-                sample_imgs = x[:10]
-                length = num_nodes(lvl, n_branches)
-                sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4] * 200) for k in range(1, length)]
-                sample_g_arr = [t[_].g[:10] for _ in range(length)]
-                statplot = StatPlot(5, 2)
-                statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
-                sample_atts = att_weights.cpu().numpy()[:10]
-                for j in range(10):
-                    statplot.add_image(
-                        sample_imgs[j][0],
-                        bboxs=[sample_bbox[j] for sample_bbox in sample_bboxs],
-                        clrs=['y', 'y', 'r', 'r', 'r', 'r'],
-                        lws=sample_atts[j, 1:] * length
+        # TODO: v_batch_size probably should take from argparse
+        v_batch_size = 256
+        valid_loader = data_generator(mnist_valid, v_batch_size, False)
+        cnt = 0
+        hit = 0
+        levelwise_hit = np.zeros(n_levels + 1)
+        sum_loss = 0
+        with T.no_grad():
+            for i, (x, y, b) in enumerate(valid_loader):
+                total_loss = 0
+                t, _ = builder(x)
+                readout_list = readout(t)
+
+                for lvl in range(start_lvl, n_levels + 1):
+                    y_pred, att_weights = readout_list[lvl]
+                    loss = F.cross_entropy(
+                        y_pred, y
                     )
+                    total_loss += loss
+                    levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
+
+                sum_loss += total_loss.item()
+                hit = levelwise_hit[-1]
+                cnt += batch_size
+
+                lvl = n_levels
+
+                if i == 0:
+                    sample_imgs = x[:10]
+                    length = num_nodes(lvl, n_branches)
+                    sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4] * 200) for k in range(1, length)]
+                    sample_g_arr = [t[_].g[:10] for _ in range(length)]
+                    statplot = StatPlot(5, 2)
+                    statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
+                    sample_atts = att_weights.cpu().numpy()[:10]
+                    for j in range(10):
+                        statplot.add_image(
+                            sample_imgs[j][0],
+                            bboxs=[sample_bbox[j] for sample_bbox in sample_bboxs],
+                            clrs=['y', 'y', 'r', 'r', 'r', 'r'],
+                            lws=sample_atts[j, 1:] * length
+                        )
+                        for k in range(length):
+                            statplot_g_arr[k].add_image(sample_g_arr[k][j][0], title='att_weight={}'.format(sample_atts[j, k]))
+                    writer.add_image('Image/{}/viz_bbox'.format(lvl), fig_to_ndarray_tb(statplot.fig), epoch)
                     for k in range(length):
-                        statplot_g_arr[k].add_image(sample_g_arr[k][j][0], title='att_weight={}'.format(sample_atts[j, k]))
-                writer.add_image('Image/{}/viz_bbox'.format(lvl), fig_to_ndarray_tb(statplot.fig), epoch)
-                for k in range(length):
-                    writer.add_image('Image/{}/viz_glim_{}'.format(lvl, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
-                plt.close('all')
+                        writer.add_image('Image/{}/viz_glim_{}'.format(lvl, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
+                    plt.close('all')
 
-    avg_loss = sum_loss / i
-    acc = hit * 1.0 / cnt
-    levelwise_acc = levelwise_hit * 1.0 / cnt
-    print("Loss on valid set: {}".format(avg_loss))
-    print("Accuracy on valid set: {}".format(acc))
+        avg_loss = sum_loss / i
+        acc = hit * 1.0 / cnt
+        levelwise_acc = levelwise_hit * 1.0 / cnt
+        print("Loss on valid set: {}".format(avg_loss))
+        print("Accuracy on valid set: {}".format(acc))
 
-    writer.add_scalar('data/loss', avg_loss, epoch)
-    if args.schedule:
-        writer.add_scalars('data/levelwise_loss', {str(lvl): levelwise_acc[lvl] for lvl in range(n_levels + 1)}, epoch)
-    writer.add_scalar('data/accuracy', acc, epoch)
+        writer.add_scalar('data/loss', avg_loss, epoch)
+        if args.schedule:
+            writer.add_scalars('data/levelwise_loss', {str(lvl): levelwise_acc[lvl] for lvl in range(n_levels + 1)}, epoch)
+        writer.add_scalar('data/accuracy', acc, epoch)
 
-    if (epoch + 1) % 10 == 0:
-        print('Save checkpoint...')
-        if not os.path.exists('checkpoints/'):
-            os.makedirs('checkpoints')
-        T.save(builder, 'checkpoints/builder_{}.pt'.format(epoch))
-        T.save(readout, 'checkpoints/readout_{}.pt'.format(epoch))
+        if (epoch + 1) % 10 == 0:
+            print('Save checkpoint...')
+            if not os.path.exists('checkpoints/'):
+                os.makedirs('checkpoints')
+            T.save(builder, 'checkpoints/builder_{}.pt'.format(epoch))
+            T.save(readout, 'checkpoints/readout_{}.pt'.format(epoch))
+
+if __name__ == '__main__':
+    train()
