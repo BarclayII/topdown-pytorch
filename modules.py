@@ -11,6 +11,36 @@ from util import cuda, area, intersection
 def num_nodes(lvl, brch):
     return (brch ** (lvl + 1) - 1) // (brch - 1)
 
+def F_reg_par_chd_1(g_par, g_chd):
+    """
+    Regularization term(Parent-Child)
+    """
+    return (
+        F.relu(
+            (g_par[..., 0] - g_par[..., 2]) - (g_chd[..., 0] - g_chd[..., 2])
+        ) +
+        F.relu(
+            (g_chd[..., 0] + g_chd[..., 2]) - (g_par[..., 0] + g_par[..., 2])
+        ) +
+        F.relu(
+            (g_par[..., 0] - g_par[..., 4]) - (g_chd[..., 0] - g_chd[..., 4])
+        ) +
+        F.relu(
+            (g_chd[..., 0] + g_chd[..., 4]) - (g_par[..., 0] + g_par[..., 4])
+        ) +
+        F.relu(
+            (g_par[..., 1] - g_par[..., 3]) - (g_chd[..., 1] - g_chd[..., 3])
+        ) +
+        F.relu(
+            (g_chd[..., 1] + g_chd[..., 3]) - (g_par[..., 1] + g_par[..., 3])
+        ) +
+        F.relu(
+            (g_par[..., 1] - g_par[..., 5]) - (g_chd[..., 1] - g_chd[..., 5])
+        ) +
+        F.relu(
+            (g_chd[..., 1] + g_chd[..., 5]) - (g_par[..., 1] + g_par[..., 5])
+        )).sum()
+
 def F_reg_par_chd(g_par, g_chd):
     """
     Regularization term(Parent-Child)
@@ -128,7 +158,7 @@ class SelfAttentionModule(nn.Module):
 
     def forward(self, input):
         return self.net_att(input) if self.net_att is not None else \
-                cuda(T.ones(input.shape[0], 1))
+                cuda(T.ones(*input.shape[:-1], 1))
 
 
 class TreeBuilder(nn.Module):
