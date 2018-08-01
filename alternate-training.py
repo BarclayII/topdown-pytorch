@@ -59,8 +59,8 @@ n_branches = args.branches
 n_levels = args.levels
 
 if args.resume is not None:
-    builder = T.load('checkpoints/builder_{}.pt'.format(args.resume))
-    readout = T.load('checkpoints/readout_{}.pt'.format(args.resume))
+    builder = T.load('checkpoints/{}_builder_{}.pt'.format(expr_setting, args.resume))
+    readout = T.load('checkpoints/{}_readout_{}.pt'.format(expr_setting, args.resume))
 else:
     builder = cuda(TreeBuilder(n_branches=n_branches,
                             n_levels=n_levels,
@@ -198,8 +198,8 @@ def train():
             print('Save checkpoint...')
             if not os.path.exists('checkpoints/'):
                 os.makedirs('checkpoints')
-            T.save(builder, 'checkpoints/builder_{}.pt'.format(epoch))
-            T.save(readout, 'checkpoints/readout_{}.pt'.format(epoch))
+            T.save(builder, 'checkpoints/{}_builder_{}.pt'.format(expr_setting, epoch))
+            T.save(readout, 'checkpoints/{}_readout_{}.pt'.format(expr_setting, epoch))
 
 if __name__ == '__main__':
     train()
