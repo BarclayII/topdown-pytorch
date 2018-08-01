@@ -11,6 +11,36 @@ from util import cuda, area, intersection
 def num_nodes(lvl, brch):
     return (brch ** (lvl + 1) - 1) // (brch - 1)
 
+def F_reg_par_chd_1(g_par, g_chd):
+    """
+    Regularization term(Parent-Child)
+    """
+    return (
+        F.relu(
+            (g_par[..., 0] - g_par[..., 2]) - (g_chd[..., 0] - g_chd[..., 2])
+        ) +
+        F.relu(
+            (g_chd[..., 0] + g_chd[..., 2]) - (g_par[..., 0] + g_par[..., 2])
+        ) +
+        F.relu(
+            (g_par[..., 0] - g_par[..., 4]) - (g_chd[..., 0] - g_chd[..., 4])
+        ) +
+        F.relu(
+            (g_chd[..., 0] + g_chd[..., 4]) - (g_par[..., 0] + g_par[..., 4])
+        ) +
+        F.relu(
+            (g_par[..., 1] - g_par[..., 3]) - (g_chd[..., 1] - g_chd[..., 3])
+        ) +
+        F.relu(
+            (g_chd[..., 1] + g_chd[..., 3]) - (g_par[..., 1] + g_par[..., 3])
+        ) +
+        F.relu(
+            (g_par[..., 1] - g_par[..., 5]) - (g_chd[..., 1] - g_chd[..., 5])
+        ) +
+        F.relu(
+            (g_chd[..., 1] + g_chd[..., 5]) - (g_par[..., 1] + g_par[..., 5])
+        )).sum()
+
 def F_reg_par_chd(g_par, g_chd):
     """
     Regularization term(Parent-Child)
@@ -124,10 +154,11 @@ class SelfAttentionModule(nn.Module):
                 nn.LeakyReLU()
             )
         else:  # 'mean'
-            self.net_att = lambda x: cuda(T.ones(x.shape[0], 1))
+            self.net_att = None
 
     def forward(self, input):
-        return self.net_att(input)
+        return self.net_att(input) if self.net_att is not None else \
+                cuda(T.ones(*input.shape[:-1], 1))
 
 
 class TreeBuilder(nn.Module):
@@ -143,11 +174,12 @@ class TreeBuilder(nn.Module):
                  n_branches=1,
                  n_levels=1,
                  att_type='self',
+                 glimpse_type='gaussian',
                  c_reg=0
                  ):
         super(TreeBuilder, self).__init__()
 
-        glimpse = create_glimpse('bilinear', glimpse_size)
+        glimpse = create_glimpse(glimpse_type, glimpse_size)
 
         g_dims = glimpse.att_params
 

@@ -43,11 +43,11 @@ parser.add_argument('--reg', default=0, type=float, help='regularization paramet
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
+parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
 args = parser.parse_args()
 expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if k is not 'resume')
 
 writer = SummaryWriter('runs/{}'.format(expr_setting))
-args = parser.parse_args()
 mnist_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=True)
 mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=False, mode='valid')
 
@@ -57,7 +57,11 @@ n_levels = args.levels
 if args.resume is not None:
     pass  # TODO
 
-builder = cuda(TreeBuilder(n_branches=n_branches, n_levels=n_levels, att_type=args.att_type, c_reg=args.reg))
+builder = cuda(TreeBuilder(n_branches=n_branches,
+                           n_levels=n_levels,
+                           att_type=args.att_type,
+                           c_reg=args.reg,
+                           glimpse_type=args.glm_type))
 readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
 
 train_shuffle = True
