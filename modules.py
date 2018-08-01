@@ -128,7 +128,7 @@ class SelfAttentionModule(nn.Module):
 
     def forward(self, input):
         return self.net_att(input) if self.net_att is not None else \
-                cuda(T.ones(x.shape[0], 1))
+                cuda(T.ones(input.shape[0], 1))
 
 
 class TreeBuilder(nn.Module):
