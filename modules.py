@@ -264,7 +264,7 @@ class TreeBuilder(nn.Module):
                 if l != 0:
                     for j in range(self.n_branches):
                         F_reg = F_reg_par_chd if self.reg_type == 0 else F_reg_par_chd_1
-                        reg_loss = reg_loss + self.c_reg * F_reg(
+                        reg_loss = reg_loss + F_reg(
                                 t[(i - 1) // self.n_branches].bbox,
                                 t[i].bbox
                                 ).mean()
