@@ -252,6 +252,5 @@ class ReadoutModule(nn.Module):
         nodes = t[:num_nodes(lvl, self.n_branches)]
         att = F.softmax(T.stack([node.att for node in nodes], 1), dim=1)
         #TODO: need to remove attn here; this is a hack
-        att = T.ones_like(att)
         h = T.stack([node.h for node in nodes], 1)
         return self.predictor((h * att).sum(dim=1)), att.squeeze(-1)
