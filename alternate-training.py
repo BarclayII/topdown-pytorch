@@ -154,7 +154,7 @@ def train():
 
                 sum_loss += total_loss.item()
                 hit = levelwise_hit[-1]
-                cnt += batch_size
+                cnt += v_batch_size
 
                 lvl = n_levels
 
