@@ -80,7 +80,6 @@ acc_arr = []
 def rank_loss(a, b, margin=0):
     return (b - a + margin).clamp(min=0).mean()
 
-@profile
 def train():
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))

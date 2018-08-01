@@ -221,7 +221,6 @@ class TreeBuilder(nn.Module):
                 if self.n_branches > 1 \
                 else range(level, level + 1)
 
-    @profile
     def forward(self, x, lvl=None):
         if lvl is None:
             lvl = self.n_levels
