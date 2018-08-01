@@ -124,10 +124,11 @@ class SelfAttentionModule(nn.Module):
                 nn.LeakyReLU()
             )
         else:  # 'mean'
-            self.net_att = lambda x: cuda(T.ones(x.shape[0], 1))
+            self.net_att = None
 
     def forward(self, input):
-        return self.net_att(input)
+        return self.net_att(input) if self.net_att is not None else \
+                cuda(T.ones(input.shape[0], 1))
 
 
 class TreeBuilder(nn.Module):
@@ -143,11 +144,12 @@ class TreeBuilder(nn.Module):
                  n_branches=1,
                  n_levels=1,
                  att_type='self',
+                 glimpse_type='gaussian',
                  c_reg=0
                  ):
         super(TreeBuilder, self).__init__()
 
-        glimpse = create_glimpse('bilinear', glimpse_size)
+        glimpse = create_glimpse(glimpse_type, glimpse_size)
 
         g_dims = glimpse.att_params
 
