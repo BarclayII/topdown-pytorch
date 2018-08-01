@@ -43,7 +43,7 @@ parser.add_argument('--clip', default=0.1, type=float, help='gradient clipping n
 parser.add_argument('--reg', default=0, type=float, help='regularization parameter')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
-parser.add_argument('--rank', default=False, type=bool, help='use rank loss')
+parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
 args = parser.parse_args()
@@ -91,6 +91,7 @@ for epoch in range(n_epochs):
     n_batches = len_train // batch_size
     hit = 0
     cnt = 0
+    levelwise_hit = np.zeros(n_levels + 1)
 
     for i, (x, y, b) in enumerate(train_loader):
         total_loss = 0
@@ -111,13 +112,14 @@ for epoch in range(n_epochs):
             y_score_last = y_score
 
             total_loss = total_loss + loss
+            levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
 
         opt.zero_grad()
         total_loss.backward()
         nn.utils.clip_grad_norm_(params, args.clip)
         opt.step()
-        sum_loss += loss.item()
-        hit += (y_pred.max(dim=-1)[1] == y).sum().item()
+        sum_loss += total_loss.item()
+        hit = levelwise_hit[-1]
         cnt += batch_size
 
         if i % args.log_interval == 0 and i > 0:
@@ -126,23 +128,33 @@ for epoch in range(n_epochs):
             print('Batch {}/{}, loss = {}, acc={}'.format(i, n_batches, avg_loss, hit * 1.0 / cnt))
             hit = 0
             cnt = 0
+            levelwise_hit *= 0
 
     # TODO: v_batch_size probably should take from argparse
     v_batch_size = 256
     valid_loader = data_generator(mnist_valid, v_batch_size, False)
     cnt = 0
     hit = 0
+    levelwise_hit = np.zeros(n_levels + 1)
     sum_loss = 0
     with T.no_grad():
         for i, (x, y, b) in enumerate(valid_loader):
-            t, _ = builder(x, lvl)
-            y_pred, att_weights = readout(t, lvl)
-            loss = F.cross_entropy(
-                y_pred, y
-            )
-            sum_loss += loss.item()
-            hit += (y_pred.max(dim=-1)[1] == y).sum().item()
+            total_loss = 0
+            for lvl in range(start_lvl, n_levels + 1):
+                t, _ = builder(x, lvl)
+                y_pred, att_weights = readout(t, lvl)
+                loss = F.cross_entropy(
+                    y_pred, y
+                )
+                total_loss += loss
+                levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
+
+            sum_loss += total_loss.item()
+            hit = levelwise_hit[-1]
             cnt += batch_size
+
+            lvl = n_levels
+
             if i == 0:
                 sample_imgs = x[:10]
                 length = num_nodes(lvl, n_branches)
@@ -167,15 +179,18 @@ for epoch in range(n_epochs):
 
     avg_loss = sum_loss / i
     acc = hit * 1.0 / cnt
+    levelwise_acc = levelwise_hit * 1.0 / cnt
     print("Loss on valid set: {}".format(avg_loss))
     print("Accuracy on valid set: {}".format(acc))
 
-    writer.add_scalar('data/{}/loss'.format(lvl), avg_loss, epoch)
-    writer.add_scalar('data/{}/accuracy'.format(lvl), acc, epoch)
+    writer.add_scalar('data/loss', avg_loss, epoch)
+    if args.schedule:
+        writer.add_scalars('data/levelwise_loss', {str(lvl): levelwise_acc[lvl] for lvl in range(n_levels + 1)}, epoch)
+    writer.add_scalar('data/accuracy', acc, epoch)
 
     if (epoch + 1) % 10 == 0:
         print('Save checkpoint...')
         if not os.path.exists('checkpoints/'):
             os.makedirs('checkpoints')
-        T.save(builder, 'checkpoints/builder_{}_{}.pt'.format(lvl, epoch))
-        T.save(readout, 'checkpoints/readout_{}_{}.pt'.format(lvl, epoch))
+        T.save(builder, 'checkpoints/builder_{}.pt'.format(epoch))
+        T.save(readout, 'checkpoints/readout_{}.pt'.format(epoch))
