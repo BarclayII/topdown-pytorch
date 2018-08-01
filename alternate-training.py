@@ -18,6 +18,7 @@ from modules import *
 import tqdm
 
 thres = [0.6, 0.95, 0.98, 0.98, 0.98]
+T.set_num_threads(4)
 
 def data_generator(dataset, batch_size, shuffle):
     from torch.utils.data import DataLoader
@@ -37,9 +38,10 @@ parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
 parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
-parser.add_argument('--att_type', default='naive', type=str, help='attention type: mean/naive/self')
+parser.add_argument('--att_type', default='naive', type=str, help='attention type: mean/naive/tanh')
 parser.add_argument('--clip', default=0.1, type=float, help='gradient clipping norm')
-parser.add_argument('--reg', default=0, type=float, help='regularization parameter')
+parser.add_argument('--reg', default=1, type=float, help='regularization parameter')
+parser.add_argument('--reg_type', default=0, type=int, help='regularization type')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
@@ -48,8 +50,8 @@ args = parser.parse_args()
 expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if k is not 'resume')
 
 writer = SummaryWriter('runs/{}'.format(expr_setting))
-mnist_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=True)
-mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=False, mode='valid')
+mnist_train = MNISTMulti('.', n_digits=1, backrand=args.backrand, image_rows=args.row, image_cols=args.col, download=True)
+mnist_valid = MNISTMulti('.', n_digits=1, backrand=args.backrand, image_rows=args.row, image_cols=args.col, download=False, mode='valid')
 
 n_branches = args.branches
 n_levels = args.levels
@@ -61,7 +63,8 @@ builder = cuda(TreeBuilder(n_branches=n_branches,
                            n_levels=n_levels,
                            att_type=args.att_type,
                            c_reg=args.reg,
-                           glimpse_type=args.glm_type))
+                           glimpse_type=args.glm_type,
+                           reg_type=args.reg_type))
 readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
 
 train_shuffle = True

@@ -142,13 +142,13 @@ class TreeItem(object):
 class SelfAttentionModule(nn.Module):
     def __init__(self, h_dims, a_dims, att_type=None):
         super(SelfAttentionModule, self).__init__()
-        if att_type is 'tanh':
+        if att_type == 'tanh':
             self.net_att = nn.Sequential(
                 nn.Linear(h_dims, a_dims),
                 nn.Tanh(),
                 nn.Linear(a_dims, 1, bias=False)
             )
-        elif att_type is 'naive':
+        elif att_type == 'naive':
             self.net_att = nn.Sequential(
                 nn.Linear(h_dims, 1),
                 nn.LeakyReLU()
@@ -175,7 +175,8 @@ class TreeBuilder(nn.Module):
                  n_levels=1,
                  att_type='self',
                  glimpse_type='gaussian',
-                 c_reg=0
+                 c_reg=0,
+                 reg_type=0,
                  ):
         super(TreeBuilder, self).__init__()
 
@@ -215,6 +216,7 @@ class TreeBuilder(nn.Module):
         self.n_branches = n_branches
         self.n_levels = n_levels
         self.g_dims = g_dims
+        self.reg_type = reg_type
 
     def noderange(self, level):
         return range(self.n_branches ** level - 1, self.n_branches ** (level + 1) - 1) \
@@ -261,7 +263,8 @@ class TreeBuilder(nn.Module):
                         t[i * self.n_branches + j + 1].b = new_b[:, k, j]
                 if l != 0:
                     for j in range(self.n_branches):
-                        reg_loss = reg_loss + F_reg_par_chd(
+                        F_reg = F_reg_par_chd if self.reg_type == 0 else F_reg_par_chd_1
+                        reg_loss = reg_loss + self.c_reg * F_reg(
                                 t[(i - 1) // self.n_branches].bbox,
                                 t[i].bbox
                                 ).mean()
