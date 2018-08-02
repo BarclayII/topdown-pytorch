@@ -11,37 +11,7 @@ from util import cuda, area, intersection
 def num_nodes(lvl, brch):
     return (brch ** (lvl + 1) - 1) // (brch - 1)
 
-def F_reg_par_chd_1(g_par, g_chd):
-    """
-    Regularization term(Parent-Child)
-    """
-    return (
-        F.relu(
-            (g_par[..., 0] - g_par[..., 2]) - (g_chd[..., 0] - g_chd[..., 2])
-        ) +
-        F.relu(
-            (g_chd[..., 0] + g_chd[..., 2]) - (g_par[..., 0] + g_par[..., 2])
-        ) +
-        F.relu(
-            (g_par[..., 0] - g_par[..., 4]) - (g_chd[..., 0] - g_chd[..., 4])
-        ) +
-        F.relu(
-            (g_chd[..., 0] + g_chd[..., 4]) - (g_par[..., 0] + g_par[..., 4])
-        ) +
-        F.relu(
-            (g_par[..., 1] - g_par[..., 3]) - (g_chd[..., 1] - g_chd[..., 3])
-        ) +
-        F.relu(
-            (g_chd[..., 1] + g_chd[..., 3]) - (g_par[..., 1] + g_par[..., 3])
-        ) +
-        F.relu(
-            (g_par[..., 1] - g_par[..., 5]) - (g_chd[..., 1] - g_chd[..., 5])
-        ) +
-        F.relu(
-            (g_chd[..., 1] + g_chd[..., 5]) - (g_par[..., 1] + g_par[..., 5])
-        )).sum()
-
-def F_reg_par_chd(g_par, g_chd):
+def F_reg_pc(g_par, g_chd):
     """
     Regularization term(Parent-Child)
     """
@@ -49,6 +19,21 @@ def F_reg_par_chd(g_par, g_chd):
     bbox_penalty = (chd_area - intersection(g_par, g_chd) + 1e-6) / \
                    (chd_area + 1e-6)
     return bbox_penalty.clamp(min=0)
+
+def F_reg_cc(g_chd_list):
+    """
+    Regularization term(among childs)
+    """
+    chds_penalty = 0
+    areas = [area(g_chd) for g_chd in g_chd_list]
+    chds_penalty = T.zeros_like(areas[0])
+    for i, g_chd_i in enumerate(g_chd_list):
+        for j, g_chd_j in enumerate(g_chd_list):
+            if i < j:
+                intersection_area = intersection(g_chd_i, g_chd_j)
+                chds_penalty += (intersection_area + 1e-6) / (areas[i] + 1e-6) + \
+                        (intersection_area + 1e-6) / (areas[j] + 1e-6)
+    return chds_penalty
 
 def build_cnn(**config):
     cnn_list = []
@@ -174,8 +159,8 @@ class TreeBuilder(nn.Module):
                  n_levels=1,
                  att_type='self',
                  glimpse_type='gaussian',
-                 c_reg=0,
-                 reg_type=0
+                 pc_coef=0,
+                 cc_coef=0,
                  ):
         super(TreeBuilder, self).__init__()
 
@@ -205,7 +190,8 @@ class TreeBuilder(nn.Module):
                 )
 
         batch_norm = nn.BatchNorm1d(h_dims * 2)
-        self.c_reg = c_reg
+        self.pc_coef = pc_coef
+        self.cc_coef = cc_coef
         self.batch_norm = batch_norm
         self.net_phi = net_phi
         self.net_b = net_b
@@ -215,7 +201,6 @@ class TreeBuilder(nn.Module):
         self.n_branches = n_branches
         self.n_levels = n_levels
         self.g_dims = g_dims
-        self.reg_type = reg_type
 
     def noderange(self, level):
         return range(self.n_branches ** level - 1, self.n_branches ** (level + 1) - 1) \
@@ -232,7 +217,8 @@ class TreeBuilder(nn.Module):
         # root init
         t[0].b = x.new(batch_size, self.g_dims).zero_()
 
-        reg_loss = 0
+        loss_pc = 0
+        loss_cc = 0
         for l in range(0, lvl + 1):
             current_level = self.noderange(l)
 
@@ -242,8 +228,6 @@ class TreeBuilder(nn.Module):
             n_glimpses = g.shape[1]
             g_flat = g.view(batch_size * n_glimpses, *g.shape[2:])
             phi = self.net_phi[l](g_flat, readout=False)
-            #self.batch_norm(T.cat([self.net_g[l](g_flat, readout=False),
-            #                       b.view(-1, self.g_dims)], dim=-1))
             h_b = self.net_b_to_h[l](b.view(batch_size * n_glimpses, self.g_dims))
             h = self.batch_norm(T.cat([phi, h_b], dim=-1))
             att = self.net_att(h).view(batch_size, n_glimpses, -1)
@@ -265,13 +249,13 @@ class TreeBuilder(nn.Module):
                         t[i * self.n_branches + j + 1].b = new_b[:, k, j]
                 if l != 0:
                     for j in range(self.n_branches):
-                        F_reg = F_reg_par_chd if self.reg_type == 0 else F_reg_par_chd_1
-                        reg_loss = reg_loss + F_reg(
+                        loss_pc = loss_pc + F_reg_pc(
                                 t[(i - 1) // self.n_branches].bbox,
                                 t[i].bbox
                                 ).mean()
+            loss_cc += F_reg_cc([t[i].bbox for i in current_level]).mean()
 
-        return t, reg_loss * self.c_reg
+        return t, loss_pc * self.pc_coef + loss_cc * self.cc_coef
 
 
 class ReadoutModule(nn.Module):
