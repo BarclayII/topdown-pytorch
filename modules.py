@@ -93,7 +93,7 @@ class WhatModule(nn.Module):
         )
         self.net_p = nn.Sequential( # net_p is preserved
             nn.ReLU(),
-            nn.Linear(h_dims * 2, n_classes),
+            nn.Linear(h_dims, n_classes),
         )
 
     def forward(self, glimpse_kxk, readout=True):
@@ -291,3 +291,36 @@ class ReadoutModule(nn.Module):
             h = T.stack([node.h for node in nodes], 1)
             results.append((self.predictor((h * att).sum(dim=1)), att.squeeze(-1)))
         return results
+
+
+class MultiscaleGlimpse(nn.Module):
+    multiplier = cuda(T.FloatTensor(
+            [#[1, 1, 0.5, 0.5, 0.5, 0.5],
+             [1, 1, 1, 1, 1, 1],
+             #[1, 1, 1.5, 1.5, 1.5, 1.5],
+             ]
+            ))
+
+    def __init__(self, **config):
+        nn.Module.__init__(self)
+
+        glimpse_type = config['glimpse_type']
+        self.glimpse_size = config['glimpse_size']
+        self.n_glimpses = config['n_glimpses']
+        self.glimpse = create_glimpse(glimpse_type, self.glimpse_size)
+
+    def forward(self, x, b=None, flatten_glimpses=True):
+        batch_size, n_channels = x.shape[:2]
+        if b is None:
+            # defaults to full canvas
+            b = x.new(batch_size, self.glimpse.att_params).zero_()
+        b, _ = self.glimpse.rescale(b[:, None], False)
+        b = b.repeat(1, self.n_glimpses, 1) * self.multiplier[None]
+        g = self.glimpse(x, b)
+        if flatten_glimpses:
+            g = g.view(
+                batch_size * self.n_glimpses, n_channels, self.glimpse_size[0], self.glimpse_size[1])
+        else:
+            g = g.view(
+                batch_size, self.n_glimpses, n_channels, self.glimpse_size[0], self.glimpse_size[1])
+        return g

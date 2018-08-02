@@ -78,6 +78,26 @@ def rank_loss(a, b, margin=0):
     #return (b - a + margin).clamp(min=0).mean()
     return F.sigmoid(b - a).mean()
 
+
+def viz(epoch, imgs, bboxes, g_arr, att, tag):
+    length = len(g_arr)
+    statplot = StatPlot(5, 2)
+    statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
+    for j in range(10):
+        statplot.add_image(
+            imgs[j].permute(1, 2, 0),
+            bboxs=[bbox[j] for bbox in bboxes],
+            clrs=['y', 'y', 'r', 'r', 'r', 'r'],
+            lws=att[j, 1:] * length
+        )
+        for k in range(length):
+            statplot_g_arr[k].add_image(g_arr[k][j].permute(1, 2, 0), title='att_weight={}'.format(att[j, k]))
+    writer.add_image('Image/{}/viz_bbox'.format(tag), fig_to_ndarray_tb(statplot.fig), epoch)
+    for k in range(length):
+        writer.add_image('Image/{}/viz_glim_{}'.format(tag, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
+    plt.close('all')
+
+
 def train():
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
@@ -99,7 +119,7 @@ def train():
             readout_list = readout(t)
 
             for lvl in range(start_lvl, n_levels + 1):
-                y_pred, _ = readout_list[lvl]
+                y_pred, att_weights = readout_list[lvl]
                 y_score = y_pred.gather(1, y[:, None])[:, 0]
 
                 ce_loss = F.cross_entropy(y_pred, y)
@@ -120,6 +140,15 @@ def train():
             sum_loss += total_loss.item()
             hit = levelwise_hit[-1]
             cnt += batch_size
+
+            if i == 0:
+                sample_imgs = x[:10]
+                length = len(t)
+                sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * 200) for k in range(1, length)]
+                sample_g_arr = [t[_].g[:10].detach() for _ in range(length)]
+                sample_atts = att_weights.detach().cpu().numpy()[:10]
+
+                viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'train')
 
             if i % args.log_interval == 0 and i > 0:
                 avg_loss = sum_loss / args.log_interval
@@ -153,29 +182,14 @@ def train():
                 hit = levelwise_hit[-1]
                 cnt += v_batch_size
 
-                lvl = n_levels
-
                 if i == 0:
                     sample_imgs = x[:10]
-                    length = num_nodes(lvl, n_branches)
+                    length = len(t)
                     sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4] * 200) for k in range(1, length)]
                     sample_g_arr = [t[_].g[:10] for _ in range(length)]
-                    statplot = StatPlot(5, 2)
-                    statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
                     sample_atts = att_weights.cpu().numpy()[:10]
-                    for j in range(10):
-                        statplot.add_image(
-                            sample_imgs[j].permute(1, 2, 0),
-                            bboxs=[sample_bbox[j] for sample_bbox in sample_bboxs],
-                            clrs=['y', 'y', 'r', 'r', 'r', 'r'],
-                            lws=sample_atts[j, 1:] * length
-                        )
-                        for k in range(length):
-                            statplot_g_arr[k].add_image(sample_g_arr[k][j].permute(1, 2, 0), title='att_weight={}'.format(sample_atts[j, k]))
-                    writer.add_image('Image/{}/viz_bbox'.format(lvl), fig_to_ndarray_tb(statplot.fig), epoch)
-                    for k in range(length):
-                        writer.add_image('Image/{}/viz_glim_{}'.format(lvl, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
-                    plt.close('all')
+
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'valid')
 
         avg_loss = sum_loss / i
         acc = hit * 1.0 / cnt
