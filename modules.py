@@ -24,7 +24,6 @@ def F_reg_cc(g_chd_list):
     """
     Regularization term(among childs)
     """
-    chds_penalty = 0
     areas = [area(g_chd) for g_chd in g_chd_list]
     chds_penalty = T.zeros_like(areas[0])
     for i, g_chd_i in enumerate(g_chd_list):
