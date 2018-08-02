@@ -3,14 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as INIT
 import torch.optim as optim
-import torchvision
 import numpy as np
 import argparse
 import os
 import sys
 from glimpse import create_glimpse
 from util import cuda
-from datasets import MNISTMulti
+from datasets import get_generator
 from viz import fig_to_ndarray_tb
 from tensorboardX import SummaryWriter
 from stats.utils import *
@@ -18,15 +17,6 @@ from modules import *
 import tqdm
 
 thres = [0.6, 0.95, 0.98, 0.98, 0.98]
-
-def data_generator(dataset, batch_size, shuffle):
-    from torch.utils.data import DataLoader
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, drop_last=True, num_workers=0)
-    for _x, _y, _B in dataloader:
-        x = _x[:, None].expand(_x.shape[0], 3, _x.shape[1], _x.shape[2]).float() / 255.
-        y = _y.squeeze(1)
-        b = _B.squeeze(1).float() / 200
-        yield cuda(x), cuda(y), cuda(b)
 
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--resume', default=None, help='resume training from checkpoint')
@@ -46,12 +36,14 @@ parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
+parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, cifar10)')
 args = parser.parse_args()
 expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if k is not 'resume')
 
+data_generator, dataset_train, dataset_valid, train_sampler, valid_sampler = \
+        get_generator(args)
+
 writer = SummaryWriter('runs/{}'.format(expr_setting))
-mnist_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=True)
-mnist_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, download=False, mode='valid')
 
 n_branches = args.branches
 n_levels = args.levels
@@ -71,8 +63,8 @@ train_shuffle = True
 n_epochs = args.n
 batch_size = args.batch_size
 
-len_train = len(mnist_train)
-len_valid = len(mnist_valid)
+len_train = len(dataset_train)
+len_valid = len(dataset_valid)
 
 loss_arr = []
 acc_arr = []
@@ -87,7 +79,7 @@ def train():
         opt = T.optim.RMSprop(params, lr=1e-4)
 
         start_lvl = 0 if args.schedule else n_levels
-        train_loader = data_generator(mnist_train, batch_size, train_shuffle)
+        train_loader = data_generator(dataset_train, batch_size, shuffle=True, sampler=train_sampler)
         sum_loss = 0
         n_batches = len_train // batch_size
         hit = 0
@@ -133,7 +125,7 @@ def train():
 
         # TODO: v_batch_size probably should take from argparse
         v_batch_size = 256
-        valid_loader = data_generator(mnist_valid, v_batch_size, False)
+        valid_loader = data_generator(dataset_valid, v_batch_size, shuffle=False, sampler=valid_sampler)
         cnt = 0
         hit = 0
         levelwise_hit = np.zeros(n_levels + 1)
