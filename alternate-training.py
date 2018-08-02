@@ -28,10 +28,10 @@ parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
 parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
-parser.add_argument('--att_type', default='naive', type=str, help='attention type: mean/naive/tanh')
+parser.add_argument('--att_type', default='tanh', type=str, help='attention type: mean/naive/tanh')
 parser.add_argument('--clip', default=0.1, type=float, help='gradient clipping norm')
-parser.add_argument('--reg', default=1, type=float, help='regularization parameter')
-parser.add_argument('--reg_type', default=0, type=int, help='regularization type')
+parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
+parser.add_argument('--cc_coef', default=1, type=float, help='regularization parameter(child-child)')
 parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
@@ -40,6 +40,8 @@ parser.add_argument('--backrand', default=0, type=int, help='background noise(ra
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
 parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, cifar10)')
 parser.add_argument('--v_batch_size', default=256, type=int, help='valid batch size')
+parser.add_argument('--size_min', default=None, type=int, help='Object minimum size')
+parser.add_argument('--size_max', default=None, type=int, help='Object maximum size')
 args = parser.parse_args()
 expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if k != 'resume' and k != 'v_batch_size')
 
@@ -58,9 +60,9 @@ else:
     builder = cuda(TreeBuilder(n_branches=n_branches,
                             n_levels=n_levels,
                             att_type=args.att_type,
-                            c_reg=args.reg,
-                            glimpse_type=args.glm_type,
-                            reg_type=args.reg_type))
+                            pc_coef=args.pc_coef,
+                            cc_coef=args.cc_coef,
+                            glimpse_type=args.glm_type))
     readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
 
 train_shuffle = True
@@ -77,7 +79,6 @@ acc_arr = []
 def rank_loss(a, b, margin=0):
     #return (b - a + margin).clamp(min=0).mean()
     return F.sigmoid(b - a).mean()
-
 
 def viz(epoch, imgs, bboxes, g_arr, att, tag):
     length = len(g_arr)
@@ -96,10 +97,6 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag):
     for k in range(length):
         writer.add_image('Image/{}/viz_glim_{}'.format(tag, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
     plt.close('all')
-
-
-def rank_loss_1(a, b):
-    return F.sigmoid(b - a) - 0.5
 
 def train():
     for epoch in range(n_epochs):
