@@ -28,7 +28,7 @@ parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
 parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
-parser.add_argument('--att_type', default='tanh', type=str, help='attention type: mean/naive/tanh')
+parser.add_argument('--att_type', default='mean', type=str, help='attention type: mean/naive/tanh')
 parser.add_argument('--clip', default=0.1, type=float, help='gradient clipping norm')
 parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
 parser.add_argument('--cc_coef', default=1, type=float, help='regularization parameter(child-child)')
@@ -40,10 +40,17 @@ parser.add_argument('--backrand', default=0, type=int, help='background noise(ra
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
 parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, cifar10)')
 parser.add_argument('--v_batch_size', default=256, type=int, help='valid batch size')
-parser.add_argument('--size_min', default=None, type=int, help='Object minimum size')
-parser.add_argument('--size_max', default=None, type=int, help='Object maximum size')
+parser.add_argument('--size_min', default=28 // 3 * 2, type=int, help='Object minimum size')
+parser.add_argument('--size_max', default=28, type=int, help='Object maximum size')
 args = parser.parse_args()
-expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if k != 'resume' and k != 'v_batch_size')
+filter_arg_dict = {
+        'resume': None,
+        'v_batch_size': None,
+        'batch_size': None,
+        'n': None,
+        'log_interval': None,
+}
+expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if not k in filter_arg_dict)
 
 data_generator, dataset_train, dataset_valid, train_sampler, valid_sampler = \
         get_generator(args)
@@ -185,7 +192,7 @@ def train():
                 if i == 0:
                     sample_imgs = x[:10]
                     length = len(t)
-                    sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4] * 200) for k in range(1, length)]
+                    sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4] * args.row) for k in range(1, length)]
                     sample_g_arr = [t[_].g[:10] for _ in range(length)]
                     sample_atts = att_weights.cpu().numpy()[:10]
 

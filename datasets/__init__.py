@@ -24,8 +24,8 @@ def data_generator_cifar10(dataset, batch_size, **config):
 
 def get_generator(args):
     if args.dataset == 'mnistmulti':
-        dataset_train = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, backrand=args.backrand, download=True, size_min=args.size_min, size_max=args.size_max)
-        dataset_valid = MNISTMulti('.', n_digits=1, backrand=0, image_rows=args.row, image_cols=args.col, backrand=args.backrand, download=False, mode='valid', size_min=args.size_min, size_max=args.size_max)
+        dataset_train = MNISTMulti('.', n_digits=1, backrand=args.backrand, image_rows=args.row, image_cols=args.col, download=True, size_min=args.size_min, size_max=args.size_max)
+        dataset_valid = MNISTMulti('.', n_digits=1, backrand=args.backrand, image_rows=args.row, image_cols=args.col, download=False, mode='valid', size_min=args.size_min, size_max=args.size_max)
         train_sampler = valid_sampler = None
         data_generator = data_generator_mnistmulti
     elif args.dataset == 'cifar10':

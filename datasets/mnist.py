@@ -109,10 +109,6 @@ class MNISTMulti(Dataset):
                 T.random.manual_seed(self.seeds[_mode])
 
                 n_samples, n_rows, n_cols = src_data.size()
-                if self.size_min is None:
-                    self.size_min = n_rows // 3 * 2
-                if self.size_max is None:
-                    self.size_max = n_rows
                 n_new_samples = n_samples * n_digits
                 data = T.ByteTensor(n_new_samples, image_rows, image_cols).zero_()
                 labels = T.LongTensor(n_new_samples, n_digits).zero_()
