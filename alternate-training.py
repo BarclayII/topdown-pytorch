@@ -84,6 +84,9 @@ acc_arr = []
 def rank_loss(a, b, margin=0):
     return (b - a + margin).clamp(min=0).mean()
 
+def rank_loss_1(a, b):
+    return F.sigmoid(b - a) - 0.5
+
 def train():
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
