@@ -1,11 +1,13 @@
 import torch as T
 import skorch
-from torchvision.datasets import MNIST
+from torchvision.datasets import MNIST, CIFAR10
 from datasets import MNISTMulti
 from topdown import *
 from util import USE_CUDA, cuda
+import numpy as np
 
-mnist = MNIST('.', download=True)
+#mnist = MNIST('.', download=True)
+cifar = CIFAR10('.', download=True)
 #mnist = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=True)
 
 #dfs = DFSGlimpseSingleObjectClassifier()
@@ -46,8 +48,11 @@ net = skorch.NeuralNetClassifier(
             skorch.callbacks.Checkpoint('cnntest.pt'),
             ]
         )
-train_data = mnist.train_data.float()[:, None].repeat(1, 3, 1, 1) / 255.
+#train_data = mnist.train_data.float()[:, None].repeat(1, 3, 1, 1) / 255.
 #train_labels = mnist.train_labels[:, 0]
-train_labels = mnist.train_labels
-print(module.forward(cuda(train_data[0:10])), train_labels[0:10])
+#train_labels = mnist.train_labels
+#print(module.forward(cuda(train_data[0:10])), train_labels[0:10])
+#net.fit(train_data, train_labels, epochs=100)
+train_data = cifar.train_data.transpose(0, 3, 1, 2).astype('float32') / 255.
+train_labels = np.array(cifar.train_labels).astype('int64')
 net.fit(train_data, train_labels, epochs=100)

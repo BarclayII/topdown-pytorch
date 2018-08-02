@@ -32,6 +32,7 @@ parser.add_argument('--att_type', default='naive', type=str, help='attention typ
 parser.add_argument('--clip', default=0.1, type=float, help='gradient clipping norm')
 parser.add_argument('--reg', default=1, type=float, help='regularization parameter')
 parser.add_argument('--reg_type', default=0, type=int, help='regularization type')
+parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--rank', action='store_true', help='use rank loss')
@@ -74,7 +75,8 @@ loss_arr = []
 acc_arr = []
 
 def rank_loss(a, b, margin=0):
-    return (b - a + margin).clamp(min=0).mean()
+    #return (b - a + margin).clamp(min=0).mean()
+    return F.sigmoid(b - a).mean()
 
 def train():
     for epoch in range(n_epochs):
@@ -105,7 +107,7 @@ def train():
 
                 if args.rank and lvl > start_lvl:
                     loss_rank = rank_loss(y_score, y_score_last)
-                    loss = loss + loss_rank
+                    loss = loss + args.rank_coef * loss_rank
                 y_score_last = y_score
 
                 total_loss = total_loss + loss
@@ -163,13 +165,13 @@ def train():
                     sample_atts = att_weights.cpu().numpy()[:10]
                     for j in range(10):
                         statplot.add_image(
-                            sample_imgs[j][0],
+                            sample_imgs[j].permute(1, 2, 0),
                             bboxs=[sample_bbox[j] for sample_bbox in sample_bboxs],
                             clrs=['y', 'y', 'r', 'r', 'r', 'r'],
                             lws=sample_atts[j, 1:] * length
                         )
                         for k in range(length):
-                            statplot_g_arr[k].add_image(sample_g_arr[k][j][0], title='att_weight={}'.format(sample_atts[j, k]))
+                            statplot_g_arr[k].add_image(sample_g_arr[k][j].permute(1, 2, 0), title='att_weight={}'.format(sample_atts[j, k]))
                     writer.add_image('Image/{}/viz_bbox'.format(lvl), fig_to_ndarray_tb(statplot.fig), epoch)
                     for k in range(length):
                         writer.add_image('Image/{}/viz_glim_{}'.format(lvl, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
