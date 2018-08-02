@@ -16,7 +16,7 @@ from stats.utils import *
 from modules import *
 import tqdm
 
-thres = [0.6, 0.95, 0.98, 0.98, 0.98]
+T.set_num_threads(4)
 
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--resume', default=None, help='resume training from checkpoint')
@@ -28,17 +28,19 @@ parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
 parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
-parser.add_argument('--att_type', default='naive', type=str, help='attention type: mean/naive/self')
+parser.add_argument('--att_type', default='naive', type=str, help='attention type: mean/naive/tanh')
 parser.add_argument('--clip', default=0.1, type=float, help='gradient clipping norm')
-parser.add_argument('--reg', default=0, type=float, help='regularization parameter')
+parser.add_argument('--reg', default=1, type=float, help='regularization parameter')
+parser.add_argument('--reg_type', default=0, type=int, help='regularization type')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
 parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, cifar10)')
+parser.add_argument('--v_batch_size', default=256, type=int, help='valid batch size')
 args = parser.parse_args()
-expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if k is not 'resume')
+expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if k != 'resume' and k != 'v_batch_size')
 
 data_generator, dataset_train, dataset_valid, train_sampler, valid_sampler = \
         get_generator(args)
@@ -49,14 +51,16 @@ n_branches = args.branches
 n_levels = args.levels
 
 if args.resume is not None:
-    pass  # TODO
-
-builder = cuda(TreeBuilder(n_branches=n_branches,
-                           n_levels=n_levels,
-                           att_type=args.att_type,
-                           c_reg=args.reg,
-                           glimpse_type=args.glm_type))
-readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
+    builder = T.load('checkpoints/{}_builder_{}.pt'.format(expr_setting, args.resume))
+    readout = T.load('checkpoints/{}_readout_{}.pt'.format(expr_setting, args.resume))
+else:
+    builder = cuda(TreeBuilder(n_branches=n_branches,
+                            n_levels=n_levels,
+                            att_type=args.att_type,
+                            c_reg=args.reg,
+                            glimpse_type=args.glm_type,
+                            reg_type=args.reg_type))
+    readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
 
 train_shuffle = True
 
@@ -118,13 +122,12 @@ def train():
             if i % args.log_interval == 0 and i > 0:
                 avg_loss = sum_loss / args.log_interval
                 sum_loss = 0
-                print('Batch {}/{}, loss = {}, acc={}'.format(i, n_batches, avg_loss, hit * 1.0 / cnt))
+                print('Batch {}/{}, loss = {}, acc = {}'.format(i, n_batches, avg_loss, hit * 1.0 / cnt))
                 hit = 0
                 cnt = 0
                 levelwise_hit *= 0
 
-        # TODO: v_batch_size probably should take from argparse
-        v_batch_size = 256
+        v_batch_size = args.v_batch_size
         valid_loader = data_generator(dataset_valid, v_batch_size, shuffle=False, sampler=valid_sampler)
         cnt = 0
         hit = 0
@@ -187,8 +190,8 @@ def train():
             print('Save checkpoint...')
             if not os.path.exists('checkpoints/'):
                 os.makedirs('checkpoints')
-            T.save(builder, 'checkpoints/builder_{}.pt'.format(epoch))
-            T.save(readout, 'checkpoints/readout_{}.pt'.format(epoch))
+            T.save(builder, 'checkpoints/{}_builder_{}.pt'.format(expr_setting, epoch))
+            T.save(readout, 'checkpoints/{}_readout_{}.pt'.format(expr_setting, epoch))
 
 if __name__ == '__main__':
     train()
