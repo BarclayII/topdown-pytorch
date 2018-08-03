@@ -125,12 +125,13 @@ def train():
             t, loss_reg = builder(x)
             readout_list = readout(t)
 
+			total_loss = loss_reg
             for lvl in range(start_lvl, n_levels + 1):
                 y_pred, att_weights = readout_list[lvl]
                 y_score = y_pred.gather(1, y[:, None])[:, 0]
 
                 ce_loss = F.cross_entropy(y_pred, y)
-                loss = ce_loss + loss_reg
+                loss = ce_loss
 
                 if args.rank and lvl > start_lvl:
                     loss_rank = rank_loss(y_score, y_score_last)
