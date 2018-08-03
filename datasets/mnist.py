@@ -36,11 +36,13 @@ class MNISTMulti(Dataset):
 
     @property
     def _meta(self):
-        return '%d-%d-%d-%d.pt' % (
+        return '%d-%d-%d-%d-%d-%d.pt' % (
                 self.image_rows,
                 self.image_cols,
                 self.n_digits,
-                self.backrand)
+                self.backrand,
+                self.size_min,
+                self.size_max)
 
     @property
     def training_file(self):
@@ -64,12 +66,16 @@ class MNISTMulti(Dataset):
                  image_cols=100,
                  n_digits=1,
                  size_multiplier=1,
-                 backrand=0):
+                 backrand=0,
+                 size_min=None,
+                 size_max=None):
         self.mode = mode
         self.image_rows = image_rows
         self.image_cols = image_cols
         self.n_digits = n_digits
         self.backrand = backrand
+        self.size_min = size_min
+        self.size_max = size_max
 
         if os.path.exists(self.dir_):
             if os.path.isfile(self.dir_):
@@ -116,8 +122,8 @@ class MNISTMulti(Dataset):
                     perm = T.randperm(n_samples)
                     for k, idx in zip(
                             range(n_samples * j, n_samples * (j + 1)), perm):
-                        cur_rows = RNG.randint(n_rows // 3 * 2, n_rows)
-                        cur_cols = RNG.randint(n_rows // 3 * 2, n_cols)
+                        cur_rows = RNG.randint(self.size_min, self.size_max)
+                        cur_cols = RNG.randint(self.size_min, self.size_max)
                         row = RNG.randint(image_rows - cur_rows)
                         col = RNG.randint(image_cols - cur_cols)
                         cur_data = T.from_numpy(

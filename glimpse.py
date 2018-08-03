@@ -18,8 +18,8 @@ def gaussian_masks(c, d, s, len_, glim_len):
     # glim_len / 2.  The generated Gaussian attention does not
     # correspond to the actual crop of the bbox.
     # Possibly a bug?
-    R = tovar(T.arange(0, glim_len).view(1, 1, 1, -1) - glim_len / 2)
-    C = T.arange(0, len_).view(1, 1, -1, 1)
+    R = tovar(T.arange(0, glim_len).float().view(1, 1, 1, -1) - glim_len / 2)
+    C = T.arange(0, len_).float().view(1, 1, -1, 1)
     C = C.expand(batch_size, n_glims, len_, 1)
     C = tovar(C)
     c = c[:, :, None, None]
@@ -323,8 +323,8 @@ class BilinearGlimpse(NN.Module):
         dx = dx[:, :, None]
         dy = dy[:, :, None]
 
-        mx = cx + dx * (tovar(T.arange(ccol))[None, None, :] - (ccol - 1) / 2)
-        my = cy + dy * (tovar(T.arange(crow))[None, None, :] - (crow - 1) / 2)
+        mx = cx + dx * (tovar(T.arange(ccol).float())[None, None, :] - (ccol - 1) / 2)
+        my = cy + dy * (tovar(T.arange(crow).float())[None, None, :] - (crow - 1) / 2)
 
         mx = mx.view(-1, 1, ccol).expand(-1, crow, ccol)
         my = my.view(-1, crow, 1).expand(-1, crow, ccol)
