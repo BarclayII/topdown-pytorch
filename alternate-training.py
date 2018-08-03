@@ -169,7 +169,8 @@ def train():
         valid_loader = data_generator(dataset_valid, v_batch_size, shuffle=False, sampler=valid_sampler)
         cnt = 0
         hit = 0
-        nodewise_hit = np.zeros(num_node(n_levels, n_branches))
+        from modules import num_nodes
+        nodewise_hit = np.zeros(num_nodes(n_levels, n_branches))
         sum_loss = 0
         with T.no_grad():
             for i, (x, y, b) in enumerate(valid_loader):

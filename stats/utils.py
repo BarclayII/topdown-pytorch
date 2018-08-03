@@ -96,7 +96,7 @@ class StatPlot(object):
                 if clrs is None:
                     clrs = ['r'] * len(bboxs)
                 if lws is None:
-                    lws = [1 * len(bboxs)]
+                    lws = [1] * len(bboxs)
                 for bbox, clr, lw in zip(bboxs, clrs, lws):
                     x, y, h, w = bbox
                     rect = patches.Rectangle((x, y), h, w, linewidth=lw, edgecolor=clr, facecolor='none')
