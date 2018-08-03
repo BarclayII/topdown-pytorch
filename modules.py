@@ -159,13 +159,8 @@ class TreeBuilder(nn.Module):
                  n_levels=1,
                  att_type='self',
                  glimpse_type='gaussian',
-<<<<<<< HEAD
-                 c_reg=0,
-                 reg_type=0,
-=======
                  pc_coef=0,
                  cc_coef=0,
->>>>>>> multi-zz
                  ):
         super(TreeBuilder, self).__init__()
 
