@@ -151,7 +151,7 @@ def train():
             if i == 0:
                 sample_imgs = x[:10]
                 length = len(t)
-                sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * 200) for k in range(1, length)]
+                sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * args.row) for k in range(1, length)]
                 sample_g_arr = [t[_].g[:10].detach() for _ in range(length)]
                 sample_atts = att_weights.detach().cpu().numpy()[:10]
 
