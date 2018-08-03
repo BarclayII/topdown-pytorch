@@ -30,8 +30,9 @@ def F_reg_cc(g_chd_list):
         for j, g_chd_j in enumerate(g_chd_list):
             if i < j:
                 intersection_area = intersection(g_chd_i, g_chd_j)
-                chds_penalty += (intersection_area + 1e-6) / (areas[i] + 1e-6) + \
-                        (intersection_area + 1e-6) / (areas[j] + 1e-6)
+                union_area = (areas[i] + areas[j] - intersection_area)
+                chds_penalty += (intersection_area + 1e-6) / (union_area + 1e-6)
+
     return chds_penalty
 
 def build_cnn(**config):
@@ -247,12 +248,14 @@ class TreeBuilder(nn.Module):
                     for j in range(self.n_branches):
                         t[i * self.n_branches + j + 1].b = new_b[:, k, j]
                 if l != 0:
-                    for j in range(self.n_branches):
-                        loss_pc = loss_pc + F_reg_pc(
-                                t[(i - 1) // self.n_branches].bbox,
-                                t[i].bbox
-                                ).mean()
-            loss_cc += F_reg_cc([t[i].bbox for i in current_level]).mean()
+                    loss_pc += F_reg_pc(
+                            t[(i - 1) // self.n_branches].bbox,
+                            t[i].bbox
+                            ).mean()
+                    if (k + 1) % self.n_branches == 0:
+                        loss_cc += F_reg_cc(
+                            [t[current_level[k - j]].bbox for j in range(self.n_branches)]
+                            ).mean()
 
         return t, loss_pc * self.pc_coef + loss_cc * self.cc_coef
 
