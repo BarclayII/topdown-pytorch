@@ -298,7 +298,7 @@ class MultiscaleGlimpse(nn.Module):
             # defaults to full canvas
             b = x.new(batch_size, self.glimpse.att_params).zero_()
         b, _ = self.glimpse.rescale(b[:, None], False)
-        b = b.repeat(1, self.n_glimpses, 1) * self.multiplier[None]
+        b = b.repeat(1, self.n_glimpses, 1) * self.multiplier[None, :, :self.glimpse.att_params]
         g = self.glimpse(x, b)
         if flatten_glimpses:
             g = g.view(
