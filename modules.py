@@ -201,7 +201,6 @@ class TreeBuilder(nn.Module):
         self.n_branches = n_branches
         self.n_levels = n_levels
         self.g_dims = g_dims
-        self.reg_type = reg_type
 
     def noderange(self, level):
         return range(self.n_branches ** level - 1, self.n_branches ** (level + 1) - 1) \
