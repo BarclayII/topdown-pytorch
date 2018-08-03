@@ -77,9 +77,6 @@ train_shuffle = True
 n_epochs = args.n
 batch_size = args.batch_size
 
-len_train = len(dataset_train)
-len_valid = len(dataset_valid)
-
 loss_arr = []
 acc_arr = []
 
@@ -106,65 +103,94 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag):
     plt.close('all')
 
 def train():
+    lr = 1e-4
+    best_epoch = 0
+    best_valid_loss = 1e6
+    best_acc = 0
+
+    print('Scanning training set...')
+    n_train_batches = 0
+    train_loader = data_generator(dataset_train, batch_size, shuffle=True, sampler=train_sampler)
+    for x, y, b in tqdm.tqdm(train_loader):
+        n_train_batches += 1
+
+    params = list(builder.parameters()) + list(readout.parameters())
+    if args.dataset == 'mnist':
+        opt = T.optim.RMSprop(params, lr=1e-4)
+    elif args.dataset == 'cifar10':
+        opt = T.optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=5e-4)
+
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
-        params = list(builder.parameters()) + list(readout.parameters())
-        opt = T.optim.RMSprop(params, lr=1e-4)
 
         start_lvl = 0 if args.schedule else n_levels
         train_loader = data_generator(dataset_train, batch_size, shuffle=True, sampler=train_sampler)
         sum_loss = 0
-        n_batches = len_train // batch_size
         hit = 0
         cnt = 0
         levelwise_hit = np.zeros(n_levels + 1)
 
-        for i, (x, y, b) in enumerate(train_loader):
-            total_loss = 0
+        # I can directly use tqdm.tqdm(train_loader) but it doesn't display progress bar and time estimates
+        with tqdm.trange(n_train_batches) as tq:
+            for i in tq:
+                x, y, b = next(train_loader)
 
-            t, loss_reg = builder(x)
-            readout_list = readout(t)
+                total_loss = 0
 
-            total_loss = loss_reg
-            for lvl in range(start_lvl, n_levels + 1):
-                y_pred, att_weights = readout_list[lvl]
-                y_score = y_pred.gather(1, y[:, None])[:, 0]
+                t, loss_reg = builder(x)
+                readout_list = readout(t)
 
-                ce_loss = F.cross_entropy(y_pred, y)
-                loss = ce_loss
+                total_loss = loss_reg
+                for lvl in range(start_lvl, n_levels + 1):
+                    y_pred, att_weights = readout_list[lvl]
+                    y_score = y_pred.gather(1, y[:, None])[:, 0]
 
-                if args.rank and lvl > start_lvl:
-                    loss_rank = rank_loss(y_score, y_score_last)
-                    loss = loss + args.rank_coef * loss_rank
-                y_score_last = y_score
+                    ce_loss = F.cross_entropy(y_pred, y)
+                    loss = ce_loss
 
-                total_loss = total_loss + loss
-                levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
+                    if args.rank and lvl > start_lvl:
+                        loss_rank = rank_loss(y_score, y_score_last)
+                        loss = loss + args.rank_coef * loss_rank
+                    y_score_last = y_score
 
-            opt.zero_grad()
-            total_loss.backward()
-            nn.utils.clip_grad_norm_(params, args.clip)
-            opt.step()
-            sum_loss += total_loss.item()
-            hit = levelwise_hit[-1]
-            cnt += batch_size
+                    total_loss = total_loss + loss
+                    current_hit = (y_pred.max(dim=-1)[1] == y).sum().item()
+                    levelwise_hit[lvl] += current_hit
 
-            if i == 0:
-                sample_imgs = x[:10]
-                length = len(t)
-                sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * args.row) for k in range(1, length)]
-                sample_g_arr = [t[_].g[:10].detach() for _ in range(length)]
-                sample_atts = att_weights.detach().cpu().numpy()[:10]
+                opt.zero_grad()
+                total_loss.backward()
+                nn.utils.clip_grad_norm_(params, args.clip)
+                opt.step()
+                sum_loss += total_loss.item()
+                hit = levelwise_hit[-1]
+                cnt += batch_size
 
-                viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'train')
+                if i == 0:
+                    sample_imgs = x[:10]
+                    length = len(t)
+                    sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * args.row) for k in range(1, length)]
+                    sample_g_arr = [t[_].g[:10].detach() for _ in range(length)]
+                    sample_atts = att_weights.detach().cpu().numpy()[:10]
 
-            if i % args.log_interval == 0 and i > 0:
-                avg_loss = sum_loss / args.log_interval
-                sum_loss = 0
-                print('Batch {}/{}, loss = {}, acc = {}'.format(i, n_batches, avg_loss, hit * 1.0 / cnt))
-                hit = 0
-                cnt = 0
-                levelwise_hit *= 0
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'train')
+
+                '''
+                if i % args.log_interval == 0 and i > 0:
+                    avg_loss = sum_loss / args.log_interval
+                    sum_loss = 0
+                    print('Batch {}/{}, loss = {}, acc = {}'.format(i, n_batches, avg_loss, hit * 1.0 / cnt))
+                    hit = 0
+                    cnt = 0
+                    levelwise_hit *= 0
+                '''
+                tq.set_postfix({
+                    'train_loss': total_loss.item(),
+                    'train_acc': current_hit / batch_size,
+                    })
+            tq.set_postfix({
+                'train_avg_loss': sum_loss / n_train_batches,
+                'train_avg_acc': hit / cnt,
+                })
 
         v_batch_size = args.v_batch_size
         valid_loader = data_generator(dataset_valid, v_batch_size, shuffle=False, sampler=valid_sampler)
@@ -216,6 +242,16 @@ def train():
                 os.makedirs('checkpoints')
             T.save(builder, 'checkpoints/{}_builder_{}.pt'.format(expr_setting, epoch))
             T.save(readout, 'checkpoints/{}_readout_{}.pt'.format(expr_setting, epoch))
+
+        if best_valid_loss > avg_loss:
+            best_valid_loss = avg_loss
+            best_epoch = epoch
+        elif best_epoch < epoch - 5 and lr > 1e-4:
+            best_epoch = epoch
+            print('Shrinking learning rate...')
+            lr /= 10
+            for pg in opt.param_groups:
+                pg['lr'] = lr
 
 if __name__ == '__main__':
     train()
