@@ -201,7 +201,6 @@ class TreeBuilder(nn.Module):
         self.n_branches = n_branches
         self.n_levels = n_levels
         self.g_dims = g_dims
-        self.reg_type = reg_type
 
     def noderange(self, level):
         return range(self.n_branches ** level - 1, self.n_branches ** (level + 1) - 1) \
@@ -272,13 +271,15 @@ class ReadoutModule(nn.Module):
     def forward(self, t):
         #nodes = t[-self.n_branches ** self.n_levels:]
         results = []
-        for lvl in range(self.n_levels + 1):
-            nodes = t[:num_nodes(lvl, self.n_branches)]
+        for i in range(num_nodes(self.n_levels, self.n_branches)):
+            path = [i]
+            while (path[-1] > 0):
+                path.append((path[-1] - 1) // self.n_branches)
+            nodes = [t[_] for _ in path]
             att = F.softmax(T.stack([node.att for node in nodes], 1), dim=1)
             h = T.stack([node.h for node in nodes], 1)
-            results.append((self.predictor((h * att).sum(dim=1)), att.squeeze(-1)))
+            results.append(self.predictor((h * att).sum(dim=1)))
         return results
-
 
 class MultiscaleGlimpse(nn.Module):
     multiplier = cuda(T.FloatTensor(
