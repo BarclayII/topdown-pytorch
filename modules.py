@@ -30,8 +30,10 @@ def F_reg_cc(g_chd_list):
         for j, g_chd_j in enumerate(g_chd_list):
             if i < j:
                 intersection_area = intersection(g_chd_i, g_chd_j)
-                union_area = (areas[i] + areas[j] - intersection_area)
-                chds_penalty += (intersection_area + 1e-6) / (union_area + 1e-6)
+#                union_area = (areas[i] + areas[j] - intersection_area)
+#                chds_penalty += (intersection_area + 1e-6) / (union_area + 1e-6)
+                chds_penalty += (intersection_area + 1e-6) / (areas[i] + 1e-6) + \
+                        (intersection_area + 1e-6) / (areas[j] + 1e-6)
 
     return chds_penalty
 
