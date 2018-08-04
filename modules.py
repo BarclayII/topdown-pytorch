@@ -257,7 +257,7 @@ class TreeBuilder(nn.Module):
                             [t[current_level[k - j]].bbox for j in range(self.n_branches)]
                             ).mean()
 
-        return t, loss_pc * self.pc_coef + loss_cc * self.cc_coef
+        return t, (loss_pc * self.pc_coef, loss_cc * self.cc_coef)
 
 
 class ReadoutModule(nn.Module):

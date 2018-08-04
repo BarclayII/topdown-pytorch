@@ -115,7 +115,7 @@ def train():
         n_train_batches += 1
 
     params = list(builder.parameters()) + list(readout.parameters())
-    if args.dataset == 'mnist':
+    if args.dataset == 'mnistmulti':
         opt = T.optim.RMSprop(params, lr=1e-4)
     elif args.dataset == 'cifar10':
         opt = T.optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=5e-4)
@@ -126,6 +126,12 @@ def train():
         start_lvl = 0 if args.schedule else n_levels
         train_loader = data_generator(dataset_train, batch_size, shuffle=True, sampler=train_sampler)
         sum_loss = 0
+        train_loss_dict = {
+                'pc': 0.,
+                'cc': 0.,
+                'rank': 0,
+                'ce': 0,
+        }
         hit = 0
         cnt = 0
         levelwise_hit = np.zeros(n_levels + 1)
@@ -135,22 +141,25 @@ def train():
             for i in tq:
                 x, y, b = next(train_loader)
 
-                total_loss = 0
-
-                t, loss_reg = builder(x)
+                t, (loss_pc, loss_cc) = builder(x)
+                train_loss_dict['pc'] += loss_pc.item()
+                train_loss_dict['cc'] += loss_cc.item()
                 readout_list = readout(t)
 
-                total_loss = loss_reg
+                total_loss = loss_pc + loss_cc
                 for lvl in range(start_lvl, n_levels + 1):
                     y_pred, att_weights = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
 
-                    ce_loss = F.cross_entropy(y_pred, y)
-                    loss = ce_loss
+                    loss_ce = F.cross_entropy(y_pred, y)
+                    train_loss_dict['ce'] += loss_ce.item()
+                    loss = loss_ce
 
                     if args.rank and lvl > start_lvl:
                         loss_rank = rank_loss(y_score, y_score_last)
                         loss = loss + args.rank_coef * loss_rank
+                        train_loss_dict['rank'] += args.rank_coef * loss_rank.item()
+
                     y_score_last = y_score
 
                     total_loss = total_loss + loss
@@ -191,6 +200,9 @@ def train():
                 'train_avg_loss': sum_loss / n_train_batches,
                 'train_avg_acc': hit / cnt,
                 })
+        for key in train_loss_dict.keys():
+            train_loss_dict[key] /= n_train_batches
+        writer.add_scalars('data/train_loss_dict', train_loss_dict, epoch)
 
         v_batch_size = args.v_batch_size
         valid_loader = data_generator(dataset_valid, v_batch_size, shuffle=False, sampler=valid_sampler)
