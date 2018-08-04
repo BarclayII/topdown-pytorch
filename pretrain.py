@@ -38,11 +38,11 @@ if args.cnn == 'custom':
             128,
             10,
             )
-    #module = T.nn.Sequential(
-    #        MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(15, 15), n_glimpses=n_glimpses),
-    #        cnn,
-    #        )
-    module = cnn
+    module = T.nn.Sequential(
+            MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(15, 15), n_glimpses=n_glimpses),
+            cnn,
+            )
+    #module = cnn
 elif args.cnn == 'miniresnet20':
     #cnn = miniresnet20(num_classes=10)
     cnn = ResNet18()
@@ -94,8 +94,8 @@ elif args.dataset == 'cifar10':
     valid_dataloader = T.utils.data.DataLoader(dataset, batch_size=100, sampler=SubsetSampler(range(45000, 50000)))
 
 lr = 0.1
-#opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
-opt = T.optim.Adam(module.parameters(), weight_decay=5e-4)
+opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
+#opt = T.optim.Adam(module.parameters(), weight_decay=5e-4)
 
 best_acc = 0
 best_valid_loss = 1e6
@@ -146,12 +146,13 @@ for epoch in range(200):
 
     if best_acc < correct / total:
         best_acc = correct / total
-        T.save(module.state_dict(), 'cnntest.pt')
+        T.save(cnn.state_dict(), 'cnntest.pt')
     if best_valid_loss > avg_loss:
         best_valid_loss = avg_loss
         best_epoch = epoch
     elif best_epoch < epoch - 5:
-        best_epoch = epoch
-        print('Shrinking learning rate...')
-        lr /= 10
-        opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
+        if lr > 0.0001:
+            best_epoch = epoch
+            print('Shrinking learning rate...')
+            lr /= 10
+            opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)

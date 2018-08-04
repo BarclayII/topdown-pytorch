@@ -72,6 +72,9 @@ else:
                             glimpse_type=args.glm_type))
     readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
 
+for net_phi in builder.net_phi:
+    net_phi.load_state_dict(T.load('cnntest.pt'))
+
 train_shuffle = True
 
 n_epochs = args.n
@@ -118,7 +121,8 @@ def train():
     if args.dataset == 'mnist':
         opt = T.optim.RMSprop(params, lr=1e-4)
     elif args.dataset == 'cifar10':
-        opt = T.optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=5e-4)
+        #opt = T.optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=5e-4)
+        opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
 
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
@@ -187,10 +191,11 @@ def train():
                     'train_loss': total_loss.item(),
                     'train_acc': current_hit / batch_size,
                     })
-            tq.set_postfix({
-                'train_avg_loss': sum_loss / n_train_batches,
-                'train_avg_acc': hit / cnt,
-                })
+                if i == n_train_batches - 1:
+                    tq.set_postfix({
+                        'train_avg_loss': sum_loss / n_train_batches,
+                        'train_avg_acc': hit / cnt,
+                        })
 
         v_batch_size = args.v_batch_size
         valid_loader = data_generator(dataset_valid, v_batch_size, shuffle=False, sampler=valid_sampler)

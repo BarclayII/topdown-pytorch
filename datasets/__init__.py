@@ -33,5 +33,6 @@ def get_generator(args):
         train_sampler = SubsetRandomSampler(range(0, 45000))
         valid_sampler = SubsetSampler(range(45000, 50000))
         data_generator = data_generator_cifar10
+        args.row = args.col = 32
 
     return data_generator, dataset_train, dataset_valid, train_sampler, valid_sampler
