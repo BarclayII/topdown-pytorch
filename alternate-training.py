@@ -39,6 +39,7 @@ parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
 parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, cifar10)')
+parser.add_argument('--n_digits', default=1, type=int, help='indicate number of digits in multimnist dataset')
 parser.add_argument('--v_batch_size', default=256, type=int, help='valid batch size')
 parser.add_argument('--size_min', default=28 // 3 * 2, type=int, help='Object minimum size')
 parser.add_argument('--size_max', default=28, type=int, help='Object maximum size')
@@ -65,12 +66,13 @@ if args.resume is not None:
     readout = T.load('checkpoints/{}_readout_{}.pt'.format(expr_setting, args.resume))
 else:
     builder = cuda(TreeBuilder(n_branches=n_branches,
+                            n_classes=10**args.n_digits,
                             n_levels=n_levels,
                             att_type=args.att_type,
                             pc_coef=args.pc_coef,
                             cc_coef=args.cc_coef,
                             glimpse_type=args.glm_type))
-    readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels))
+    readout = cuda(ReadoutModule(n_branches=n_branches, n_classes=10**args.n_digits, n_levels=n_levels))
 
 train_shuffle = True
 
