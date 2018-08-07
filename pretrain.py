@@ -1,7 +1,7 @@
 import torch as T
 import torch.nn.functional as F
 from torchvision.datasets import MNIST, CIFAR10
-from torchvision.transforms import Compose, ToTensor, Normalize
+from torchvision.transforms import Compose, ToTensor, Normalize, RandomCrop, RandomHorizontalFlip
 from datasets import MNISTMulti, SubsetSampler
 from modules import WhatModule, MultiscaleGlimpse
 from pytorch_cifar.models import ResNet18
@@ -16,13 +16,21 @@ parser.add_argument('--dataset', default='cifar10', help='(cifar10, mnist)')
 args = parser.parse_args()
 
 if args.dataset == 'mnist':
-    dataset = MNIST('.', download=True, transform=ToTensor())
+    train_dataset = valid_dataset = MNIST('.', download=True, transform=ToTensor())
 elif args.dataset == 'cifar10':
-    transform = Compose([
+    transform_train = Compose([
+        RandomCrop(32, padding=4),
+        RandomHorizontalFlip(),
         ToTensor(),
-        #Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        ])
-    dataset = CIFAR10('.', download=True, transform=transform)
+        Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
+    transform_test = Compose([
+        ToTensor(),
+        Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
+    train_dataset = CIFAR10(root='.', download=True, transform=transform_train)
+    valid_dataset = CIFAR10(root='.', download=True, transform=transform_test)
+
 #mnist = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=True)
 
 #dfs = DFSGlimpseSingleObjectClassifier()
@@ -87,11 +95,11 @@ net = skorch.NeuralNetClassifier(
 
 #opt = T.optim.Adam(module.parameters(), weight_decay=1e-4)
 if args.dataset == 'mnist':
-    train_dataloader = T.utils.data.DataLoader(dataset, batch_size=32, sampler=T.utils.data.sampler.SubsetRandomSampler(range(50000)), drop_last=True)
-    valid_dataloader = T.utils.data.DataLoader(dataset, batch_size=100, sampler=SubsetSampler(range(50000, 60000)))
+    train_dataloader = T.utils.data.DataLoader(train_dataset, batch_size=32, sampler=T.utils.data.sampler.SubsetRandomSampler(range(50000)), drop_last=True)
+    valid_dataloader = T.utils.data.DataLoader(valid_dataset, batch_size=100, sampler=SubsetSampler(range(50000, 60000)))
 elif args.dataset == 'cifar10':
-    train_dataloader = T.utils.data.DataLoader(dataset, batch_size=128, sampler=T.utils.data.sampler.SubsetRandomSampler(range(45000)), drop_last=True)
-    valid_dataloader = T.utils.data.DataLoader(dataset, batch_size=100, sampler=SubsetSampler(range(45000, 50000)))
+    train_dataloader = T.utils.data.DataLoader(train_dataset, batch_size=128, sampler=T.utils.data.sampler.SubsetRandomSampler(range(45000)), drop_last=True)
+    valid_dataloader = T.utils.data.DataLoader(valid_dataset, batch_size=100, sampler=SubsetSampler(range(45000, 50000)))
 
 lr = 0.1
 opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)

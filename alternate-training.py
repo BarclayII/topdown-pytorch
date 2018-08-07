@@ -23,7 +23,7 @@ parser.add_argument('--resume', default=None, help='resume training from checkpo
 parser.add_argument('--row', default=200, type=int, help='image rows')
 parser.add_argument('--col', default=200, type=int, help='image cols')
 parser.add_argument('--n', default=100, type=int, help='number of epochs')
-parser.add_argument('--batch_size', default=64, type=int, help='batch size')
+parser.add_argument('--batch_size', default=32, type=int, help='batch size')
 parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
@@ -40,9 +40,13 @@ parser.add_argument('--backrand', default=0, type=int, help='background noise(ra
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
 parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, cifar10)')
 parser.add_argument('--n_digits', default=1, type=int, help='indicate number of digits in multimnist dataset')
-parser.add_argument('--v_batch_size', default=256, type=int, help='valid batch size')
+parser.add_argument('--v_batch_size', default=32, type=int, help='valid batch size')
 parser.add_argument('--size_min', default=28 // 3 * 2, type=int, help='Object minimum size')
 parser.add_argument('--size_max', default=28, type=int, help='Object maximum size')
+parser.add_argument('--imagenet_root', default='/beegfs/qg323', type=str)
+parser.add_argument('--imagenet_train_sel', default='selected-train.pkl', type=str)
+parser.add_argument('--imagenet_valid_sel', default='selected-val.pkl', type=str)
+parser.add_argument('--num_workers', default=0, type=int)
 args = parser.parse_args()
 filter_arg_dict = {
         'resume': None,
@@ -53,29 +57,31 @@ filter_arg_dict = {
 }
 expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if not k in filter_arg_dict)
 
-data_generator, dataset_train, dataset_valid, train_sampler, valid_sampler = \
-        get_generator(args)
+train_loader, valid_loader, preprocessor = get_generator(args)
 
 writer = SummaryWriter('runs/{}'.format(expr_setting))
 
 n_branches = args.branches
 n_levels = args.levels
+if args.dataset == 'imagenet':
+    n_classes = 1000
+elif args.dataset == 'cifar10':
+    n_classes = 10
+elif args.dataset == 'mnistmulti':
+    n_classes = 10 ** args.n_digits
 
 if args.resume is not None:
     builder = T.load('checkpoints/{}_builder_{}.pt'.format(expr_setting, args.resume))
     readout = T.load('checkpoints/{}_readout_{}.pt'.format(expr_setting, args.resume))
 else:
     builder = cuda(TreeBuilder(n_branches=n_branches,
-                            n_classes=10**args.n_digits,
                             n_levels=n_levels,
                             att_type=args.att_type,
                             pc_coef=args.pc_coef,
                             cc_coef=args.cc_coef,
+                            n_classes=n_classes,
                             glimpse_type=args.glm_type))
-    readout = cuda(ReadoutModule(n_branches=n_branches, n_classes=10**args.n_digits, n_levels=n_levels))
-
-for net_phi in builder.net_phi:
-    net_phi.load_state_dict(T.load('cnntest.pt'))
+    readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels, n_classes=n_classes))
 
 train_shuffle = True
 
@@ -88,6 +94,12 @@ acc_arr = []
 def rank_loss(a, b, margin=0):
     #return (b - a + margin).clamp(min=0).mean()
     return F.sigmoid(b - a).mean()
+
+def imagenet_normalize(x):
+    mean = T.FloatTensor([0.485, 0.456, 0.406]).to(x)
+    std = T.FloatTensor([0.229, 0.224, 0.225]).to(x)
+    x = (x - mean[None, :, None, None]) / std[None, :, None, None]
+    return x
 
 def viz(epoch, imgs, bboxes, g_arr, att, tag):
     length = len(g_arr)
@@ -108,29 +120,25 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag):
     plt.close('all')
 
 def train():
-    lr = 1e-4
     best_epoch = 0
     best_valid_loss = 1e6
     best_acc = 0
 
-    print('Scanning training set...')
-    n_train_batches = 0
-    train_loader = data_generator(dataset_train, batch_size, shuffle=True, sampler=train_sampler)
-    for x, y, b in tqdm.tqdm(train_loader):
-        n_train_batches += 1
+    n_train_batches = len(train_loader)
 
     params = list(builder.parameters()) + list(readout.parameters())
-    if args.dataset == 'mnistmulti':
+    if args.dataset == 'mnistmulti' or args.dataset == 'imagenet':
+        lr = 1e-4
         opt = T.optim.RMSprop(params, lr=1e-4)
     elif args.dataset == 'cifar10':
-        #opt = T.optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=5e-4)
-        opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
+        lr = 0.01
+        opt = T.optim.SGD(params, lr=0.01, momentum=0.9, weight_decay=5e-4)
+        #opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
 
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
 
         start_lvl = 0 if args.schedule else n_levels
-        train_loader = data_generator(dataset_train, batch_size, shuffle=True, sampler=train_sampler)
         sum_loss = 0
         train_loss_dict = {
                 'pc': 0.,
@@ -143,11 +151,19 @@ def train():
         levelwise_hit = np.zeros(n_levels + 1)
 
         # I can directly use tqdm.tqdm(train_loader) but it doesn't display progress bar and time estimates
-        with tqdm.trange(n_train_batches) as tq:
-            for i in tq:
-                x, y, b = next(train_loader)
+        with tqdm.tqdm(train_loader) as tq:
+            #x, y, b = preprocessor(next(train_iter))
+            for i, item in enumerate(tq):
+                x, y, b = preprocessor(item)
 
-                t, (loss_pc, loss_cc) = builder(x)
+                if args.dataset == 'imagenet':
+                    x_in = imagenet_normalize(x)
+                else:
+                    x_in = x
+
+                total_loss = 0
+
+                t, (loss_pc, loss_cc) = builder(x_in)
                 train_loss_dict['pc'] += loss_pc.item()
                 train_loss_dict['cc'] += loss_cc.item()
                 readout_list = readout(t)
@@ -182,8 +198,12 @@ def train():
 
                 if i == 0:
                     sample_imgs = x[:10]
+                    bbox_scaler = T.FloatTensor([[x.shape[2], x.shape[3], x.shape[2], x.shape[3]]]).to(x)
                     length = len(t)
-                    sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * args.row) for k in range(1, length)]
+                    sample_bboxs = [
+                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * bbox_scaler)
+                            for k in range(1, length)
+                            ]
                     sample_g_arr = [t[_].g[:10].detach() for _ in range(length)]
                     sample_atts = att_weights.detach().cpu().numpy()[:10]
 
@@ -211,16 +231,20 @@ def train():
             train_loss_dict[key] /= n_train_batches
         writer.add_scalars('data/train_loss_dict', train_loss_dict, epoch)
 
-        v_batch_size = args.v_batch_size
-        valid_loader = data_generator(dataset_valid, v_batch_size, shuffle=False, sampler=valid_sampler)
         cnt = 0
         hit = 0
         levelwise_hit = np.zeros(n_levels + 1)
         sum_loss = 0
         with T.no_grad():
-            for i, (x, y, b) in enumerate(valid_loader):
+            for i, item in enumerate(tqdm.tqdm(valid_loader)):
+                x, y, b = preprocessor(item)
+                if args.dataset == 'imagenet':
+                    x_in = imagenet_normalize(x)
+                else:
+                    x_in = x
+
                 total_loss = 0
-                t, _ = builder(x)
+                t, _ = builder(x_in)
                 readout_list = readout(t)
 
                 for lvl in range(start_lvl, n_levels + 1):
@@ -233,12 +257,16 @@ def train():
 
                 sum_loss += total_loss.item()
                 hit = levelwise_hit[-1]
-                cnt += v_batch_size
+                cnt += args.v_batch_size
 
                 if i == 0:
                     sample_imgs = x[:10]
                     length = len(t)
-                    sample_bboxs = [glimpse_to_xyhw(t[k].bbox[:10, :4] * args.row) for k in range(1, length)]
+                    bbox_scaler = T.FloatTensor([[x.shape[2], x.shape[3], x.shape[2], x.shape[3]]]).to(x)
+                    sample_bboxs = [
+                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * bbox_scaler)
+                            for k in range(1, length)
+                            ]
                     sample_g_arr = [t[_].g[:10] for _ in range(length)]
                     sample_atts = att_weights.cpu().numpy()[:10]
 
@@ -264,6 +292,8 @@ def train():
 
         if best_valid_loss > avg_loss:
             best_valid_loss = avg_loss
+            T.save(builder.state_dict(), 'checkpoints/{}_builder_best.pt'.format(expr_setting))
+            T.save(readout.state_dict(), 'checkpoints/{}_readout_best.pt'.format(expr_setting))
             best_epoch = epoch
         elif best_epoch < epoch - 5 and lr > 1e-4:
             best_epoch = epoch
@@ -271,6 +301,8 @@ def train():
             lr /= 10
             for pg in opt.param_groups:
                 pg['lr'] = lr
+            builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
+            readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
 
 if __name__ == '__main__':
     train()
