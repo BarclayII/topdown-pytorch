@@ -36,13 +36,13 @@ class MNISTMulti(Dataset):
 
     @property
     def _meta(self):
-        return '%d-%d-%d-%d-%d-%d.pt' % (
+        return ('cluttered-' if self.cluttered else '') + '%d-%d-%d-%d-%d-%d.pt' % (
                 self.image_rows,
                 self.image_cols,
                 self.n_digits,
                 self.backrand,
                 self.size_min,
-                self.size_max) + '-cluttered' if self.cluttered else ''
+                self.size_max)
 
     @property
     def training_file(self):
@@ -91,10 +91,24 @@ class MNISTMulti(Dataset):
         elif not os.path.exists(self.dir_):
             os.makedirs(self.dir_)
 
+        valid_src_size = 10000 // n_digits
+
         if self.cluttered:
             from .mnist_cluttered import ClutteredMNIST
             for _mode in ['train', 'valid', 'test']:
-                dataset = ClutteredMNIST(datasetPath='datasets/mnist/{}.t7'.format(_mode))
+                _train = (_mode != 'test')
+                mnist = MNIST(root, _train, download)
+                if _mode == 'train':
+                    src_data = mnist.train_data[:-valid_src_size].float() / 255.
+                    src_labels = mnist.train_labels[:-valid_src_size]
+                elif _mode == 'valid':
+                    src_data = mnist.train_data[-valid_src_size:].float() / 255.
+                    src_labels = mnist.train_labels[-valid_src_size:]
+                elif _mode == 'test':
+                    src_data = mnist.test_data.float() / 255.
+                    src_labels = mnist.test_labels
+
+                dataset = ClutteredMNIST((src_data, src_labels))
                 n = dataset.nExamples
                 data, labels = dataset.get_bunch(n)
                 locs = T.LongTensor(n, n_digits, 4).zero_()
@@ -109,10 +123,7 @@ class MNISTMulti(Dataset):
                     setattr(self, mode + '_labels', labels)
                     setattr(self, mode + '_locs', locs)
                     self.size = data.size()[0]
-
             return
-
-        valid_src_size = 10000 // n_digits
 
         for _mode in ['train', 'valid', 'test']:
             _train = (_mode != 'test')

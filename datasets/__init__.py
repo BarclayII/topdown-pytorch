@@ -48,9 +48,10 @@ def preprocess_imagenet(item):
     return cuda(_x), cuda(_y.squeeze(1)), None
 
 def get_generator(args):
-    if args.dataset == 'mnistmulti':
-        dataset_train = MNISTMulti('.', n_digits=args.n_digits, backrand=args.backrand, cluttered=args.cluttered, image_rows=args.row, image_cols=args.col, download=True, size_min=args.size_min, size_max=args.size_max)
-        dataset_valid = MNISTMulti('.', n_digits=args.n_digits, backrand=args.backrand, cluttered=args.cluttered, image_rows=args.row, image_cols=args.col, download=False, mode='valid', size_min=args.size_min, size_max=args.size_max)
+    if args.dataset.startswith('mnist'):
+        cluttered = args.dataset.endswith('cluttered')
+        dataset_train = MNISTMulti('.', n_digits=args.n_digits, backrand=args.backrand, cluttered=cluttered, image_rows=args.row, image_cols=args.col, download=True, size_min=args.size_min, size_max=args.size_max)
+        dataset_valid = MNISTMulti('.', n_digits=args.n_digits, backrand=args.backrand, cluttered=cluttered, image_rows=args.row, image_cols=args.col, download=False, mode='valid', size_min=args.size_min, size_max=args.size_max)
         train_sampler = valid_sampler = None
         loader_train = data_generator_mnistmulti(dataset_train, args.batch_size, shuffle=True)
         loader_valid = data_generator_mnistmulti(dataset_valid, args.v_batch_size, shuffle=False)

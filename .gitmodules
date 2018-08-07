@@ -1,6 +1,3 @@
 [submodule "_dgl"]
 	path = _dgl
 	url = git@github.com:zzhang-cn/dgl
-[submodule "datasets/mnist_cluttered"]
-	path = datasets/mnist_cluttered
-	url = https://github.com/deepmind/mnist-cluttered.git

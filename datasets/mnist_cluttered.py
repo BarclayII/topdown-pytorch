@@ -27,7 +27,7 @@ def placeDistractors(config, patch, examples):
         s_x = np.random.randint((d_patch.size(1) - dist_w))
         patch[t_y: t_y + dist_w, t_x: t_x + dist_w] += \
             d_patch[s_y: s_y + dist_w, s_x: s_x + dist_w]
-        patch.clamp_(max = 1)
+        patch.clamp_(max=1)
 
 def placeSpriteRandomly(obs, sprite, border):
     assert obs.dim() == 2, 'expecting an image'
@@ -44,16 +44,10 @@ def placeSpriteRandomly(obs, sprite, border):
     subTensor += sprite
     subTensor.clamp_(0, 1)
 
-def loadDataset(path):
-    from torch.utils.serialization import load_lua
-    dataset = load_lua(path)
-    return dataset
-
 class ClutteredMNIST(object):
-    def __init__(self, **kwargs):
+    def __init__(self, dataset, **kwargs):
         import os
         self.config = {
-            'datasetPath': 'mnist/train.t7',
             'megapatch_w': 100,
             'num_dist': 8,
             'dist_w': 8,
@@ -65,9 +59,7 @@ class ClutteredMNIST(object):
                 assert "unsupported params"
             self.config[k] = v
 
-        dataset = loadDataset(self.config['datasetPath'])
-        self.data = dataset['data'].float() / 256
-        self.labels = dataset['labels']
+        self.data, self.labels = dataset
         self.nExamples = self.data.size(0)
         self._step = self.nExamples
         self._perm = None
@@ -98,7 +90,7 @@ class ClutteredMNIST(object):
         labels = T.LongTensor(size, self.config['nDigits'])
         for i in range(size):
             data[i], labels[i] = self.__next__()
-        return data * 256., labels
+        return data * 255, labels
 
 if __name__ == '__main__':
     data = ClutteredMNIST()

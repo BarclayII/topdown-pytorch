@@ -29,9 +29,7 @@ parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
 parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
-parser.add_argument('--cluttered', action='store_true', help='MNIST cluttered')
 parser.add_argument('--att_type', default='mean', type=str, help='attention type: mean/naive/tanh')
-parser.add_argument('--clip', default=0.1, type=float, help='gradient clipping norm')
 parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
 parser.add_argument('--cc_coef', default=1, type=float, help='regularization parameter(child-child)')
 parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
@@ -40,7 +38,7 @@ parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
-parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, cifar10, imagenet)')
+parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, mnistcluttered, cifar10, imagenet)')
 parser.add_argument('--n_digits', default=1, type=int, help='indicate number of digits in multimnist dataset')
 parser.add_argument('--v_batch_size', default=32, type=int, help='valid batch size')
 parser.add_argument('--size_min', default=28 // 3 * 2, type=int, help='Object minimum size')
@@ -61,10 +59,7 @@ filter_arg_dict = {
         'imagenet_train_sel': None,
         'imagenet_valid_sel': None
 }
-if args.cluttered:
-    expr_setting = 'clutterd'
-else:
-    expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if not k in filter_arg_dict)
+expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if not k in filter_arg_dict)
 
 train_loader, valid_loader, preprocessor = get_generator(args)
 
@@ -78,7 +73,7 @@ if args.dataset == 'imagenet':
 elif args.dataset == 'cifar10':
     n_classes = 10
     cnn = None
-elif args.dataset == 'mnistmulti':
+elif args.dataset.startswith('mnist'):
     n_classes = 10 ** args.n_digits
     cnn = None
 
@@ -140,7 +135,7 @@ def train():
     n_train_batches = len(train_loader)
 
     params = list(builder.parameters()) + list(readout.parameters())
-    if args.dataset == 'mnistmulti' or args.dataset == 'imagenet':
+    if args.dataset.startswith('mnist') or args.dataset == 'imagenet':
         lr = 1e-4
         opt = T.optim.RMSprop(params, lr=1e-4)
     elif args.dataset == 'cifar10':
@@ -203,7 +198,7 @@ def train():
 
                 opt.zero_grad()
                 total_loss.backward()
-                nn.utils.clip_grad_norm_(params, args.clip)
+                nn.utils.clip_grad_norm_(params, 0.1)
                 opt.step()
                 sum_loss += total_loss.item()
                 hit = levelwise_hit[-1]
