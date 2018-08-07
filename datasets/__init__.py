@@ -17,11 +17,13 @@ def data_generator_mnistmulti(dataset, batch_size, **config):
 def preprocess_mnistmulti(item):
     _x, _y, _B = item
     x = _x[:, None].expand(_x.shape[0], 3, _x.shape[1], _x.shape[2]).float() / 255.
-    y = _y.squeeze(1)
+    y = _y
     n_digits = y.shape[1]
-    if n_digits == 2:
-        y = y[:, 0] * 10 + y[:, 1]
-    b = _B.squeeze(1).float() / 200
+    new_y = y[:, 0]
+    for digit in range(1, n_digits):
+        new_y = new_y * 10 + y[:, digit]
+    y = new_y
+    b = _B.squeeze(1).float()
     return cuda(x), cuda(y), cuda(b)
 
 def data_generator_cifar10(dataset, batch_size, **config):
@@ -47,8 +49,8 @@ def preprocess_imagenet(item):
 
 def get_generator(args):
     if args.dataset == 'mnistmulti':
-        dataset_train = MNISTMulti('.', n_digits=args.n_digits, backrand=args.backrand, image_rows=args.row, image_cols=args.col, download=True, size_min=args.size_min, size_max=args.size_max)
-        dataset_valid = MNISTMulti('.', n_digits=args.n_digits, backrand=args.backrand, image_rows=args.row, image_cols=args.col, download=False, mode='valid', size_min=args.size_min, size_max=args.size_max)
+        dataset_train = MNISTMulti('.', n_digits=args.n_digits, backrand=args.backrand, cluttered=args.cluttered, image_rows=args.row, image_cols=args.col, download=True, size_min=args.size_min, size_max=args.size_max)
+        dataset_valid = MNISTMulti('.', n_digits=args.n_digits, backrand=args.backrand, cluttered=args.cluttered, image_rows=args.row, image_cols=args.col, download=False, mode='valid', size_min=args.size_min, size_max=args.size_max)
         train_sampler = valid_sampler = None
         loader_train = data_generator_mnistmulti(dataset_train, args.batch_size, shuffle=True)
         loader_valid = data_generator_mnistmulti(dataset_valid, args.v_batch_size, shuffle=False)

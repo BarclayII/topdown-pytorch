@@ -42,7 +42,7 @@ class MNISTMulti(Dataset):
                 self.n_digits,
                 self.backrand,
                 self.size_min,
-                self.size_max)
+                self.size_max) + '-cluttered' if self.cluttered else ''
 
     @property
     def training_file(self):
@@ -67,6 +67,7 @@ class MNISTMulti(Dataset):
                  n_digits=1,
                  size_multiplier=1,
                  backrand=0,
+                 cluttered=False,
                  size_min=None,
                  size_max=None):
         self.mode = mode
@@ -76,6 +77,7 @@ class MNISTMulti(Dataset):
         self.backrand = backrand
         self.size_min = size_min
         self.size_max = size_max
+        self.cluttered = cluttered
 
         if os.path.exists(self.dir_):
             if os.path.isfile(self.dir_):
@@ -88,6 +90,27 @@ class MNISTMulti(Dataset):
                 return
         elif not os.path.exists(self.dir_):
             os.makedirs(self.dir_)
+
+        if self.cluttered:
+            from .mnist_cluttered import ClutteredMNIST
+            for _mode in ['train', 'valid', 'test']:
+                dataset = ClutteredMNIST(datasetPath='datasets/mnist/{}.t7'.format(_mode))
+                n = dataset.nExamples
+                data, labels = dataset.get_bunch(n)
+                locs = T.LongTensor(n, n_digits, 4).zero_()
+                T.save({
+                    'data': data,
+                    'labels': labels,
+                    'locs': locs,
+                    }, getattr(self, self.attr_prefix[_mode] + '_file'))
+
+                if _mode == mode:
+                    setattr(self, mode + '_data', data)
+                    setattr(self, mode + '_labels', labels)
+                    setattr(self, mode + '_locs', locs)
+                    self.size = data.size()[0]
+
+            return
 
         valid_src_size = 10000 // n_digits
 

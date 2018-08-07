@@ -29,6 +29,7 @@ parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
 parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
+parser.add_argument('--cluttered', action='store_true', help='MNIST cluttered')
 parser.add_argument('--att_type', default='mean', type=str, help='attention type: mean/naive/tanh')
 parser.add_argument('--clip', default=0.1, type=float, help='gradient clipping norm')
 parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
@@ -39,7 +40,7 @@ parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
-parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, cifar10)')
+parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, cifar10, imagenet)')
 parser.add_argument('--n_digits', default=1, type=int, help='indicate number of digits in multimnist dataset')
 parser.add_argument('--v_batch_size', default=32, type=int, help='valid batch size')
 parser.add_argument('--size_min', default=28 // 3 * 2, type=int, help='Object minimum size')
@@ -55,8 +56,15 @@ filter_arg_dict = {
         'batch_size': None,
         'n': None,
         'log_interval': None,
+        'num_workers': None,
+        'imagenet_root': None,
+        'imagenet_train_sel': None,
+        'imagenet_valid_sel': None
 }
-expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if not k in filter_arg_dict)
+if args.cluttered:
+    expr_setting = 'clutterd'
+else:
+    expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if not k in filter_arg_dict)
 
 train_loader, valid_loader, preprocessor = get_generator(args)
 
