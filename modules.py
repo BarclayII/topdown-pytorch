@@ -7,33 +7,31 @@ import torchvision
 import numpy as np
 from glimpse import create_glimpse
 from util import cuda, area, intersection
+import itertools
 
 def num_nodes(lvl, brch):
     return (brch ** (lvl + 1) - 1) // (brch - 1)
 
-def F_reg_pc(g_par, g_chd):
+def F_reg_pc(par, chd):
     """
     Regularization term(Parent-Child)
     """
-    chd_area = area(g_chd)
-    bbox_penalty = (chd_area - intersection(g_par, g_chd) + 1e-6) / \
+    chd_area = area(chd)
+    bbox_penalty = (chd_area - intersection(par, chd) + 1e-6) / \
                    (chd_area + 1e-6)
     return bbox_penalty.clamp(min=0)
 
-def F_reg_cc(g_chd_list):
+def F_reg_cc(chd_a, chd_b):
     """
     Regularization term(among childs)
     """
-    areas = [area(g_chd) for g_chd in g_chd_list]
-    chds_penalty = T.zeros_like(areas[0])
-    for i, g_chd_i in enumerate(g_chd_list):
-        for j, g_chd_j in enumerate(g_chd_list):
-            if i < j:
-                intersection_area = intersection(g_chd_i, g_chd_j)
-#                union_area = (areas[i] + areas[j] - intersection_area)
-#                chds_penalty += (intersection_area + 1e-6) / (union_area + 1e-6)
-                chds_penalty += (intersection_area + 1e-6) / (areas[i] + 1e-6) + \
-                        (intersection_area + 1e-6) / (areas[j] + 1e-6)
+    area_a = area(chd_a)
+    area_b = area(chd_b)
+    intersection_area = intersection(chd_a, chd_b)
+    #union_area = (areas[i] + areas[j] - intersection_area)
+    #chds_penalty += (intersection_area + 1e-6) / (union_area + 1e-6)
+    chds_penalty = (intersection_area + 1e-6) / (area_a + 1e-6) + \
+                   (intersection_area + 1e-6) / (area_b + 1e-6)
 
     return chds_penalty
 
@@ -142,9 +140,12 @@ class SelfAttentionModule(nn.Module):
         else:  # 'mean'
             self.net_att = None
 
+    #@profile
     def forward(self, input):
-        return self.net_att(input) if self.net_att is not None else \
-                cuda(T.ones(*input.shape[:-1], 1))
+        if self.net_att is not None:
+            return self.net_att(input)
+        else:
+            return T.ones(*input.shape[:-1], 1, device=input.device)
 
 
 class TreeBuilder(nn.Module):
@@ -221,6 +222,11 @@ class TreeBuilder(nn.Module):
 
         loss_pc = 0
         loss_cc = 0
+        pc_par = []
+        pc_chd = []
+        cc_chd_a = []
+        cc_chd_b = []
+
         for l in range(0, lvl + 1):
             current_level = self.noderange(l)
 
@@ -250,14 +256,15 @@ class TreeBuilder(nn.Module):
                     for j in range(self.n_branches):
                         t[i * self.n_branches + j + 1].b = new_b[:, k, j]
                 if l != 0:
-                    loss_pc += F_reg_pc(
-                            t[(i - 1) // self.n_branches].bbox,
-                            t[i].bbox
-                            ).mean()
+                    pc_par.append(t[(i - 1) // self.n_branches].bbox)
+                    pc_chd.append(t[i].bbox)
                     if (k + 1) % self.n_branches == 0:
-                        loss_cc += F_reg_cc(
-                            [t[current_level[k - j]].bbox for j in range(self.n_branches)]
-                            ).mean()
+                        for i, j in itertools.combinations(range(k - self.n_branches + 1, k + 1), 2):
+                            cc_chd_a.append(t[current_level[i]].bbox)
+                            cc_chd_b.append(t[current_level[j]].bbox)
+
+        loss_pc = F_reg_pc(T.stack(pc_par), T.stack(pc_chd)).mean()
+        loss_cc = F_reg_cc(T.stack(cc_chd_a), T.stack(cc_chd_b)).mean()
 
         return t, (loss_pc * self.pc_coef, loss_cc * self.cc_coef)
 

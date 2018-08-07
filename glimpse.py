@@ -5,6 +5,7 @@ import torch.nn as NN
 from util import *
 from distributions import LogNormal, SigmoidNormal
 
+#@profile
 def gaussian_masks(c, d, s, len_, glim_len):
     '''
     c, d, s: 2D Tensor (batch_size, n_glims)
@@ -18,10 +19,9 @@ def gaussian_masks(c, d, s, len_, glim_len):
     # glim_len / 2.  The generated Gaussian attention does not
     # correspond to the actual crop of the bbox.
     # Possibly a bug?
-    R = tovar(T.arange(0, glim_len).float().view(1, 1, 1, -1) - glim_len / 2)
-    C = T.arange(0, len_).float().view(1, 1, -1, 1)
+    R = T.arange(0, glim_len).to(c).float().view(1, 1, 1, -1) - glim_len / 2
+    C = T.arange(0, len_).to(c).float().view(1, 1, -1, 1)
     C = C.expand(batch_size, n_glims, len_, 1)
-    C = tovar(C)
     c = c[:, :, None, None]
     d = d[:, :, None, None]
     s = s[:, :, None, None]
@@ -31,12 +31,13 @@ def gaussian_masks(c, d, s, len_, glim_len):
     sr = s
 
     mask = C - cr
-    mask = (-0.5 * (mask / sr) ** 2).exp()
+    mask = (-0.5 * (mask / sr) ** 2)
+    mask = mask.exp()
 
     mask = mask / (mask.sum(2, keepdim=True) + 1e-8)
     return mask
 
-
+#@profile
 def extract_gaussian_glims(x, a, glim_size):
     '''
     x: 4D Tensor (batch_size, nchannels, nrows, ncols)
@@ -163,6 +164,7 @@ class GaussianGlimpse(NN.Module):
             s_y * D_y
             ], -1)
 
+    #@profile
     def forward(self, x, spatial_att):
         '''
         x: 4D Tensor (batch_size, nchannels, n_image_rows, n_image_cols)
