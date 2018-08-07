@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as INIT
 import torch.optim as optim
+from torchvision.models import resnet18
 import numpy as np
 import argparse
 import os
@@ -65,10 +66,13 @@ n_branches = args.branches
 n_levels = args.levels
 if args.dataset == 'imagenet':
     n_classes = 1000
+    cnn = 'resnet18'
 elif args.dataset == 'cifar10':
     n_classes = 10
+    cnn = None
 elif args.dataset == 'mnistmulti':
     n_classes = 10 ** args.n_digits
+    cnn = None
 
 if args.resume is not None:
     builder = T.load('checkpoints/{}_builder_{}.pt'.format(expr_setting, args.resume))
@@ -80,7 +84,8 @@ else:
                             pc_coef=args.pc_coef,
                             cc_coef=args.cc_coef,
                             n_classes=n_classes,
-                            glimpse_type=args.glm_type))
+                            glimpse_type=args.glm_type,
+                            cnn=cnn,))
     readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels, n_classes=n_classes))
 
 train_shuffle = True
