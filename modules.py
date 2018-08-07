@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch.nn.init as INIT
 import torch.optim as optim
 import torchvision
+import torchvision.models
 import numpy as np
 from glimpse import create_glimpse
 from util import cuda, area, intersection
@@ -61,7 +62,7 @@ def build_cnn(**config):
 
 
 class WhatModule(nn.Module):
-    def __init__(self, filters, kernel_size, final_pool_size, h_dims, n_classes, cnn=None):
+    def __init__(self, filters, kernel_size, final_pool_size, h_dims, n_classes, cnn=None, in_dims=None):
         super(WhatModule, self).__init__()
         if cnn is None:
             self.cnn = build_cnn(
@@ -69,10 +70,25 @@ class WhatModule(nn.Module):
                 kernel_size=kernel_size,
                 final_pool_size=final_pool_size
             )
+            in_dims = filters[-1] * np.prod(final_pool_size)
+        elif cnn.startswith('resnet'):
+            cnn = getattr(torchvision.models, cnn)(pretrained=True)
+            in_dims = cnn.fc.in_features
+            self.cnn = nn.Sequential(
+                    cnn.conv1,
+                    cnn.bn1,
+                    cnn.relu,
+                    cnn.maxpool,
+                    cnn.layer1,
+                    cnn.layer2,
+                    cnn.layer3,
+                    cnn.layer4,
+                    nn.AdaptiveAvgPool2d(1),
+                    )
         else:
             self.cnn = cnn
         self.net_h = nn.Sequential(
-            nn.Linear(filters[-1] * np.prod(final_pool_size), h_dims),
+            nn.Linear(in_dims, h_dims),
             nn.ReLU(),
             nn.Linear(h_dims, h_dims),
         )
@@ -85,33 +101,6 @@ class WhatModule(nn.Module):
         batch_size = glimpse_kxk.shape[0]
         h = self.net_h(self.cnn(glimpse_kxk).view(batch_size, -1))
         return h if not readout else self.net_p(h)
-
-
-class WhereModule(nn.Module):
-    def __init__(self, filters, kernel_size, final_pool_size, h_dims, g_dims, cnn=None):
-        super(WhereModule, self).__init__()
-        if cnn is None:
-            self.cnn = build_cnn(
-                filters=filters,
-                kernel_size=kernel_size,
-                final_pool_size=final_pool_size
-            )
-        else:
-            self.cnn = cnn
-        self.net_g = nn.Sequential(
-            nn.Linear(filters[-1] * np.prod(final_pool_size), h_dims),
-            nn.ReLU(),
-            nn.Linear(h_dims, h_dims),
-        )
-        self.net_p = nn.Sequential(
-            nn.ReLU(),
-            nn.Linear(h_dims * 2, g_dims),
-        )
-
-    def forward(self, glimpse_kxk, readout=True):
-        batch_size = glimpse_kxk.shape[0]
-        g = self.net_g(self.cnn(glimpse_kxk).view(batch_size, -1))
-        return g if not readout else self.net_p(g)
 
 
 class TreeItem(object):
@@ -153,6 +142,7 @@ class TreeBuilder(nn.Module):
                  glimpse_size=(15, 15),
                  what_filters=[16, 32, 64, 128, 256],
                  where_filters=[16, 32],
+                 cnn=None,
                  kernel_size=(3, 3),
                  final_pool_size=(2, 2),
                  h_dims=128,
@@ -173,7 +163,7 @@ class TreeBuilder(nn.Module):
 
         net_phi = nn.ModuleList(
                 WhatModule(what_filters, kernel_size, final_pool_size, h_dims,
-                           n_classes)
+                           n_classes, cnn)
                 for _ in range(n_levels + 1)
                 )
         net_b = nn.ModuleList(
