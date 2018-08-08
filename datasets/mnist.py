@@ -108,8 +108,14 @@ class MNISTMulti(Dataset):
                     src_data = mnist.test_data.float() / 255.
                     src_labels = mnist.test_labels
 
-                dataset = ClutteredMNIST((src_data, src_labels))
-                n = dataset.nExamples
+                num_dist = 4 if self.image_rows <= 60 else 8
+                dataset = ClutteredMNIST(
+                    (src_data, src_labels),
+                    megapatch_w=self.image_rows,
+                    nDigits=self.n_digits,
+                    num_dist=num_dist
+                )
+                n = dataset.nExamples * size_multiplier
                 data, labels = dataset.get_bunch(n)
                 locs = T.LongTensor(n, n_digits, 4).zero_()
                 T.save({

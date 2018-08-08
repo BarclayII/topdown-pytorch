@@ -52,11 +52,14 @@ def get_generator(args):
         cluttered = args.dataset.endswith('cluttered')
         dataset_train = MNISTMulti('.', n_digits=args.n_digits, backrand=args.backrand, cluttered=cluttered, image_rows=args.row, image_cols=args.col, download=True, size_min=args.size_min, size_max=args.size_max)
         dataset_valid = MNISTMulti('.', n_digits=args.n_digits, backrand=args.backrand, cluttered=cluttered, image_rows=args.row, image_cols=args.col, download=False, mode='valid', size_min=args.size_min, size_max=args.size_max)
-        train_sampler = valid_sampler = None
+        dataset_test = MNISTMulti('.', n_digits=args.n_digits, backrand=args.backrand, cluttered=cluttered, image_rows=args.row, image_cols=args.col, download=False, mode='test', size_min=args.size_min, size_max=args.size_max)
+        train_sampler = valid_sampler = test_sampler = None
         loader_train = data_generator_mnistmulti(dataset_train, args.batch_size, shuffle=True)
         loader_valid = data_generator_mnistmulti(dataset_valid, args.v_batch_size, shuffle=False)
+        loader_test = data_generator_mnistmulti(dataset_test, args.v_batch_size, shuffle=False)
         preprocessor = preprocess_mnistmulti
     elif args.dataset == 'cifar10':
+        # TODO: test set
         dataset_train = dataset_valid = torchvision.datasets.CIFAR10('.', download=True, transform=ToTensor())
         train_sampler = SubsetRandomSampler(range(0, 45000))
         valid_sampler = SubsetSampler(range(45000, 50000))
@@ -65,6 +68,7 @@ def get_generator(args):
         preprocessor = preprocess_cifar10
         args.row = args.col = 32
     elif args.dataset == 'imagenet':
+        # TODO: test set
         dataset_train = ImageNetSingle(args.imagenet_root, args.imagenet_train_sel, args.batch_size)
         dataset_valid = ImageNetSingle(args.imagenet_root, args.imagenet_valid_sel, args.v_batch_size)
         train_sampler = ImageNetBatchSampler(dataset_train)
@@ -73,4 +77,4 @@ def get_generator(args):
         loader_valid = data_generator_imagenet(dataset_valid, args.batch_size, num_workers=args.num_workers)
         preprocessor = preprocess_imagenet
 
-    return loader_train, loader_valid, preprocessor
+    return loader_train, loader_valid, loader_test, preprocessor

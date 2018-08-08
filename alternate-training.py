@@ -61,7 +61,7 @@ filter_arg_dict = {
 }
 expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if not k in filter_arg_dict)
 
-train_loader, valid_loader, preprocessor = get_generator(args)
+train_loader, valid_loader, test_loader, preprocessor = get_generator(args)
 
 writer = SummaryWriter('runs/{}'.format(expr_setting))
 
@@ -243,7 +243,7 @@ def train():
         hit = 0
         levelwise_hit = np.zeros(n_levels + 1)
         sum_loss = 0
-        with T.no_grad():
+        with t.no_grad():
             for i, item in enumerate(tqdm.tqdm(valid_loader)):
                 x, y, b = preprocessor(item)
                 if args.dataset == 'imagenet':
@@ -257,7 +257,7 @@ def train():
 
                 for lvl in range(start_lvl, n_levels + 1):
                     y_pred, att_weights = readout_list[lvl]
-                    loss = F.cross_entropy(
+                    loss = f.cross_entropy(
                         y_pred, y
                     )
                     total_loss += loss
@@ -311,6 +311,47 @@ def train():
                 pg['lr'] = lr
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
+        elif best_epoch < epoch - 5:
+            print('Early Stopping...')
+            builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
+            readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
+            cnt = 0
+            hit = 0
+            levelwise_hit = np.zeros(n_levels + 1)
+            sum_loss = 0
+            with t.no_grad():
+                for i, item in enumerate(tqdm.tqdm(test_loader)):
+                    x, y, b = preprocessor(item)
+                    if args.dataset == 'imagenet':
+                        x_in = imagenet_normalize(x)
+                    else:
+                        x_in = x
+
+                    total_loss = 0
+                    t, _ = builder(x_in)
+                    readout_list = readout(t)
+
+                    for lvl in range(start_lvl, n_levels + 1):
+                        y_pred, att_weights = readout_list[lvl]
+                        loss = f.cross_entropy(
+                            y_pred, y
+                        )
+                        total_loss += loss
+                        levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
+
+                    sum_loss += total_loss.item()
+                    hit = levelwise_hit[-1]
+                    cnt += args.v_batch_size
+
+            avg_loss = sum_loss / i
+            acc = hit * 1.0 / cnt
+            levelwise_acc = levelwise_hit * 1.0 / cnt
+            print("Loss on test set: {}".format(avg_loss))
+            print("Accuracy on test set: {}".format(acc))
+
+            for lvl in range(n_levels + 1):
+                print("Levelwise accuracy on level {}: {}".format(lvl, levelwise_acc[lvl]))
+            break
 
 if __name__ == '__main__':
     train()
