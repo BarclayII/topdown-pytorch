@@ -161,6 +161,8 @@ def train():
         cnt = 0
         levelwise_hit = np.zeros(n_levels + 1)
 
+        builder.train(mode=True)
+        readout.train(mode=True)
         # I can directly use tqdm.tqdm(train_loader) but it doesn't display progress bar and time estimates
         with tqdm.tqdm(train_loader) as tq:
             #x, y, b = preprocessor(next(train_iter))
@@ -222,15 +224,6 @@ def train():
 
                     viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'train')
 
-                '''
-                if i % args.log_interval == 0 and i > 0:
-                    avg_loss = sum_loss / args.log_interval
-                    sum_loss = 0
-                    print('Batch {}/{}, loss = {}, acc = {}'.format(i, n_batches, avg_loss, hit * 1.0 / cnt))
-                    hit = 0
-                    cnt = 0
-                    levelwise_hit *= 0
-                '''
                 tq.set_postfix({
                     'train_loss': total_loss.item(),
                     'train_acc': current_hit / batch_size,
@@ -248,7 +241,11 @@ def train():
         hit = 0
         levelwise_hit = np.zeros(n_levels + 1)
         sum_loss = 0
-        with t.no_grad():
+        builder.eval()
+        readout.eval()
+        #builder.train()
+        #readout.train()
+        with T.no_grad():
             for i, item in enumerate(tqdm.tqdm(valid_loader)):
                 x, y, b = preprocessor(item)
                 if args.dataset == 'imagenet':
@@ -262,7 +259,7 @@ def train():
 
                 for lvl in range(start_lvl, n_levels + 1):
                     y_pred, att_weights = readout_list[lvl]
-                    loss = f.cross_entropy(
+                    loss = F.cross_entropy(
                         y_pred, y
                     )
                     total_loss += loss
@@ -324,7 +321,7 @@ def train():
             hit = 0
             levelwise_hit = np.zeros(n_levels + 1)
             sum_loss = 0
-            with t.no_grad():
+            with T.no_grad():
                 for i, item in enumerate(tqdm.tqdm(test_loader)):
                     x, y, b = preprocessor(item)
                     if args.dataset == 'imagenet':
@@ -338,7 +335,7 @@ def train():
 
                     for lvl in range(start_lvl, n_levels + 1):
                         y_pred, att_weights = readout_list[lvl]
-                        loss = f.cross_entropy(
+                        loss = F.cross_entropy(
                             y_pred, y
                         )
                         total_loss += loss
