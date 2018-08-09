@@ -182,10 +182,8 @@ class TreeBuilder(nn.Module):
                 for _ in range(n_levels + 1)
                 )
 
-        batch_norm = nn.BatchNorm1d(h_dims * 2)
         self.pc_coef = pc_coef
         self.cc_coef = cc_coef
-        self.batch_norm = batch_norm
         self.net_phi = net_phi
         self.net_b = net_b
         self.net_b_to_h = net_b_to_h
@@ -227,7 +225,7 @@ class TreeBuilder(nn.Module):
             g_flat = g.view(batch_size * n_glimpses, *g.shape[2:])
             phi = self.net_phi[l](g_flat, readout=False)
             h_b = self.net_b_to_h[l](b.view(batch_size * n_glimpses, self.g_dims))
-            h = self.batch_norm(T.cat([phi, h_b], dim=-1))
+            h = T.cat([phi, h_b], dim=-1)
             att = self.net_att(h).view(batch_size, n_glimpses, -1)
 
             delta_b = (self.net_b[l](h)
