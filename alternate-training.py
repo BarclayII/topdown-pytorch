@@ -17,8 +17,6 @@ from stats.utils import *
 from modules import *
 import tqdm
 
-T.set_num_threads(4)
-
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--resume', default=None, help='resume training from checkpoint')
 parser.add_argument('--row', default=200, type=int, help='image rows')
@@ -47,15 +45,22 @@ parser.add_argument('--size_max', default=28, type=int, help='Object maximum siz
 parser.add_argument('--imagenet_root', default='/beegfs/qg323', type=str)
 parser.add_argument('--imagenet_train_sel', default='selected-train.pkl', type=str)
 parser.add_argument('--imagenet_valid_sel', default='selected-val.pkl', type=str)
+parser.add_argument('--glm_size', default=15, type=int)
 parser.add_argument('--num_workers', default=0, type=int)
+parser.add_argument('--n_gpus', default=1, type=int)
 args = parser.parse_args()
-filter_arg_dict = {
-        'resume': None,
-        'v_batch_size': None,
-        'batch_size': None,
-        'n': None,
-        'log_interval': None,
-}
+filter_arg_dict = [
+        'resume',
+        'v_batch_size',
+        'batch_size',
+        'n',
+        'log_interval',
+        'imagenet_root',
+        'imagenet_train_sel',
+        'imagenet_valid_sel',
+        'num_workers',
+        'n_gpus',
+]
 expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if not k in filter_arg_dict)
 
 train_loader, valid_loader, preprocessor = get_generator(args)
@@ -78,15 +83,16 @@ if args.resume is not None:
     builder = T.load('checkpoints/{}_builder_{}.pt'.format(expr_setting, args.resume))
     readout = T.load('checkpoints/{}_readout_{}.pt'.format(expr_setting, args.resume))
 else:
-    builder = cuda(TreeBuilder(n_branches=n_branches,
+    builder = cuda(nn.DataParallel(TreeBuilder(n_branches=n_branches,
                             n_levels=n_levels,
                             att_type=args.att_type,
                             pc_coef=args.pc_coef,
                             cc_coef=args.cc_coef,
                             n_classes=n_classes,
                             glimpse_type=args.glm_type,
-                            cnn=cnn,))
-    readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels, n_classes=n_classes))
+                            glimpse_size=(args.glm_size, args.glm_size),
+                            cnn=cnn,)))
+    readout = cuda(nn.DataParallel(ReadoutModule(n_branches=n_branches, n_levels=n_levels, n_classes=n_classes)))
 
 train_shuffle = True
 
@@ -124,6 +130,7 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag):
         writer.add_image('Image/{}/viz_glim_{}'.format(tag, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
     plt.close('all')
 
+@profile
 def train():
     best_epoch = 0
     best_valid_loss = 1e6
@@ -169,6 +176,8 @@ def train():
                 total_loss = 0
 
                 t, (loss_pc, loss_cc) = builder(x_in)
+                loss_pc = loss_pc.mean()
+                loss_cc = loss_cc.mean()
                 train_loss_dict['pc'] += loss_pc.item()
                 train_loss_dict['cc'] += loss_cc.item()
                 readout_list = readout(t)

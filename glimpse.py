@@ -5,6 +5,9 @@ import torch.nn as NN
 from util import *
 from distributions import LogNormal, SigmoidNormal
 
+_R = {}
+_C = {}
+
 #@profile
 def gaussian_masks(c, d, s, len_, glim_len):
     '''
@@ -13,14 +16,20 @@ def gaussian_masks(c, d, s, len_, glim_len):
     returns: 4D Tensor (batch_size, n_glims, glim_len, len_)
         each row is a 1D Gaussian
     '''
+    global _R, _C
     batch_size, n_glims = c.size()
+    dev = c.device
 
     # The original HART code did not shift the coordinates by
     # glim_len / 2.  The generated Gaussian attention does not
     # correspond to the actual crop of the bbox.
     # Possibly a bug?
-    R = T.arange(0, glim_len).to(c).float().view(1, 1, 1, -1) - glim_len / 2
-    C = T.arange(0, len_).to(c).float().view(1, 1, -1, 1)
+    if (glim_len, dev) not in _R:
+        _R[glim_len, dev] = T.arange(0, glim_len).to(c).float().view(1, 1, 1, -1) - glim_len / 2
+    if (len_, dev) not in _C:
+        _C[len_, dev] = T.arange(0, len_).to(c).float().view(1, 1, -1, 1)
+    R = _R[glim_len, dev]
+    C = _C[len_, dev]
     C = C.expand(batch_size, n_glims, len_, 1)
     c = c[:, :, None, None]
     d = d[:, :, None, None]

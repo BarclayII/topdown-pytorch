@@ -103,14 +103,26 @@ class WhatModule(nn.Module):
         return h if not readout else self.net_p(h)
 
 
-class TreeItem(object):
-    def __init__(self, b=None, bbox=None, h=None, y=None, att=None, g=None):
-        self.b = b
-        self.bbox = bbox
-        self.h = h
-        self.y = y
-        self.att = att
-        self.g = g
+class TreeItem(dict):
+    def __init__(self, *args, **kwargs):
+        dict.__init__(self, *args, **kwargs)
+        self._attrs = ['b', 'bbox', 'h', 'y', 'att', 'g']
+
+    def __getattr__(self, name):
+        if not name.startswith('_') and name in self._attrs:
+            return self[name]
+        return dict.__getattribute__(self, name)
+
+    def __setattr__(self, name, value):
+        if not name.startswith('_') and name in self._attrs:
+            self[name] = value
+        else:
+            dict.__setattr__(self, name, value)
+
+    def __delattr__(self, name):
+        if name not in self._attrs:
+            dict.__delattr__(self, name)
+
 
 class SelfAttentionModule(nn.Module):
     def __init__(self, h_dims, a_dims, att_type=None):
@@ -200,6 +212,7 @@ class TreeBuilder(nn.Module):
                 if self.n_branches > 1 \
                 else range(level, level + 1)
 
+    #@profile
     def forward(self, x, lvl=None):
         if lvl is None:
             lvl = self.n_levels
@@ -253,8 +266,8 @@ class TreeBuilder(nn.Module):
                             cc_chd_a.append(t[current_level[i]].bbox)
                             cc_chd_b.append(t[current_level[j]].bbox)
 
-        loss_pc = F_reg_pc(T.stack(pc_par), T.stack(pc_chd)).mean()
-        loss_cc = F_reg_cc(T.stack(cc_chd_a), T.stack(cc_chd_b)).mean()
+        loss_pc = F_reg_pc(T.stack(pc_par, 1), T.stack(pc_chd, 1)) if lvl >= 1 else x.new(1).zero_()
+        loss_cc = F_reg_cc(T.stack(cc_chd_a, 1), T.stack(cc_chd_b, 1)) if lvl >= 1 else x.new(1).zero_()
 
         return t, (loss_pc * self.pc_coef, loss_cc * self.cc_coef)
 
