@@ -36,7 +36,7 @@ class MNISTMulti(Dataset):
 
     @property
     def _meta(self):
-        return '%d-%d-%d-%d-%d-%d.pt' % (
+        return ('cluttered-' if self.cluttered else '') + '%d-%d-%d-%d-%d-%d.pt' % (
                 self.image_rows,
                 self.image_cols,
                 self.n_digits,
@@ -67,6 +67,7 @@ class MNISTMulti(Dataset):
                  n_digits=1,
                  size_multiplier=1,
                  backrand=0,
+                 cluttered=False,
                  size_min=None,
                  size_max=None):
         self.mode = mode
@@ -76,6 +77,7 @@ class MNISTMulti(Dataset):
         self.backrand = backrand
         self.size_min = size_min
         self.size_max = size_max
+        self.cluttered = cluttered
 
         if os.path.exists(self.dir_):
             if os.path.isfile(self.dir_):
@@ -90,6 +92,44 @@ class MNISTMulti(Dataset):
             os.makedirs(self.dir_)
 
         valid_src_size = 10000 // n_digits
+
+        if self.cluttered:
+            from .mnist_cluttered import ClutteredMNIST
+            for _mode in ['train', 'valid', 'test']:
+                _train = (_mode != 'test')
+                mnist = MNIST(root, _train, download)
+                if _mode == 'train':
+                    src_data = mnist.train_data[:-valid_src_size].float() / 255.
+                    src_labels = mnist.train_labels[:-valid_src_size]
+                elif _mode == 'valid':
+                    src_data = mnist.train_data[-valid_src_size:].float() / 255.
+                    src_labels = mnist.train_labels[-valid_src_size:]
+                elif _mode == 'test':
+                    src_data = mnist.test_data.float() / 255.
+                    src_labels = mnist.test_labels
+
+                num_dist = 4 if self.image_rows <= 60 else 8
+                dataset = ClutteredMNIST(
+                    (src_data, src_labels),
+                    megapatch_w=self.image_rows,
+                    nDigits=self.n_digits,
+                    num_dist=num_dist
+                )
+                n = dataset.nExamples * size_multiplier
+                data, labels = dataset.get_bunch(n)
+                locs = T.LongTensor(n, n_digits, 4).zero_()
+                T.save({
+                    'data': data,
+                    'labels': labels,
+                    'locs': locs,
+                    }, getattr(self, self.attr_prefix[_mode] + '_file'))
+
+                if _mode == mode:
+                    setattr(self, mode + '_data', data)
+                    setattr(self, mode + '_labels', labels)
+                    setattr(self, mode + '_locs', locs)
+                    self.size = data.size()[0]
+            return
 
         for _mode in ['train', 'valid', 'test']:
             _train = (_mode != 'test')

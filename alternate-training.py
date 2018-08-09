@@ -28,7 +28,6 @@ parser.add_argument('--share', action='store_true', help='indicates whether to s
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
 parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
 parser.add_argument('--att_type', default='mean', type=str, help='attention type: mean/naive/tanh')
-parser.add_argument('--clip', default=0.1, type=float, help='gradient clipping norm')
 parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
 parser.add_argument('--cc_coef', default=1, type=float, help='regularization parameter(child-child)')
 parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
@@ -37,7 +36,7 @@ parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
-parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, cifar10)')
+parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, mnistcluttered, cifar10, imagenet)')
 parser.add_argument('--n_digits', default=1, type=int, help='indicate number of digits in multimnist dataset')
 parser.add_argument('--v_batch_size', default=32, type=int, help='valid batch size')
 parser.add_argument('--size_min', default=28 // 3 * 2, type=int, help='Object minimum size')
@@ -63,7 +62,7 @@ filter_arg_dict = [
 ]
 expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if not k in filter_arg_dict)
 
-train_loader, valid_loader, preprocessor = get_generator(args)
+train_loader, valid_loader, test_loader, preprocessor = get_generator(args)
 
 writer = SummaryWriter('runs/{}'.format(expr_setting))
 
@@ -75,7 +74,7 @@ if args.dataset == 'imagenet':
 elif args.dataset == 'cifar10':
     n_classes = 10
     cnn = None
-elif args.dataset == 'mnistmulti':
+elif args.dataset.startswith('mnist'):
     n_classes = 10 ** args.n_digits
     cnn = None
 
@@ -139,7 +138,7 @@ def train():
     n_train_batches = len(train_loader)
 
     params = list(builder.parameters()) + list(readout.parameters())
-    if args.dataset == 'mnistmulti' or args.dataset == 'imagenet':
+    if args.dataset.startswith('mnist') or args.dataset == 'imagenet':
         lr = 1e-4
         opt = T.optim.RMSprop(params, lr=1e-4)
     elif args.dataset == 'cifar10':
@@ -204,7 +203,7 @@ def train():
 
                 opt.zero_grad()
                 total_loss.backward()
-                nn.utils.clip_grad_norm_(params, args.clip)
+                nn.utils.clip_grad_norm_(params, 0.1)
                 opt.step()
                 sum_loss += total_loss.item()
                 hit = levelwise_hit[-1]
@@ -249,7 +248,7 @@ def train():
         hit = 0
         levelwise_hit = np.zeros(n_levels + 1)
         sum_loss = 0
-        with T.no_grad():
+        with t.no_grad():
             for i, item in enumerate(tqdm.tqdm(valid_loader)):
                 x, y, b = preprocessor(item)
                 if args.dataset == 'imagenet':
@@ -263,7 +262,7 @@ def train():
 
                 for lvl in range(start_lvl, n_levels + 1):
                     y_pred, att_weights = readout_list[lvl]
-                    loss = F.cross_entropy(
+                    loss = f.cross_entropy(
                         y_pred, y
                     )
                     total_loss += loss
@@ -317,6 +316,47 @@ def train():
                 pg['lr'] = lr
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
+        elif best_epoch < epoch - 5:
+            print('Early Stopping...')
+            builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
+            readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
+            cnt = 0
+            hit = 0
+            levelwise_hit = np.zeros(n_levels + 1)
+            sum_loss = 0
+            with t.no_grad():
+                for i, item in enumerate(tqdm.tqdm(test_loader)):
+                    x, y, b = preprocessor(item)
+                    if args.dataset == 'imagenet':
+                        x_in = imagenet_normalize(x)
+                    else:
+                        x_in = x
+
+                    total_loss = 0
+                    t, _ = builder(x_in)
+                    readout_list = readout(t)
+
+                    for lvl in range(start_lvl, n_levels + 1):
+                        y_pred, att_weights = readout_list[lvl]
+                        loss = f.cross_entropy(
+                            y_pred, y
+                        )
+                        total_loss += loss
+                        levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
+
+                    sum_loss += total_loss.item()
+                    hit = levelwise_hit[-1]
+                    cnt += args.v_batch_size
+
+            avg_loss = sum_loss / i
+            acc = hit * 1.0 / cnt
+            levelwise_acc = levelwise_hit * 1.0 / cnt
+            print("Loss on test set: {}".format(avg_loss))
+            print("Accuracy on test set: {}".format(acc))
+
+            for lvl in range(n_levels + 1):
+                print("Levelwise accuracy on level {}: {}".format(lvl, levelwise_acc[lvl]))
+            break
 
 if __name__ == '__main__':
     train()
