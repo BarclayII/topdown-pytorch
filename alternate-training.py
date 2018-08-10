@@ -13,8 +13,9 @@ from util import cuda
 from datasets import get_generator
 from viz import fig_to_ndarray_tb
 from tensorboardX import SummaryWriter
-from stats.utils import *
+from stats import *
 from modules import *
+from constants import *
 import tqdm
 
 parser = argparse.ArgumentParser(description='Alternative')
@@ -73,7 +74,19 @@ if args.dataset == 'imagenet':
     cnn = 'resnet18'
 elif args.dataset == 'cifar10':
     n_classes = 10
-    cnn = None
+    from pytorch_cifar.models import ResNet18
+    cnn = ResNet18()
+    cnn.load_state_dict(T.load('cnntest.pt'))
+    cnn = nn.Sequential(
+            cnn.conv1,
+            cnn.bn1,
+            nn.ReLU(),
+            cnn.layer1,
+            cnn.layer2,
+            cnn.layer3,
+            cnn.layer4,
+            nn.AdaptiveAvgPool2d(1),
+            )
 elif args.dataset.startswith('mnist'):
     n_classes = 10 ** args.n_digits
     cnn = None
@@ -124,6 +137,20 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag):
         )
         for k in range(length):
             statplot_g_arr[k].add_image(g_arr[k][j].permute(1, 2, 0), title='att_weight={}'.format(att[j, k]))
+
+    statplot_disp_g = StatPlot(5, 2)
+    channel, row, col = imgs[-1].shape
+    for j in range(10):
+        bbox_list = [
+            np.array([0, 0, row, col])
+        ] + [
+            bbox_batch[j] for bbox_batch in bboxes
+        ]
+        glim_list = [
+            g_arr[k][j].permute(1, 2, 0) for k in range(length)]
+        statplot_disp_g.add_image(
+            display_glimpse(channel, row, col, bbox_list, glim_list))
+    writer.add_image('Image/{}/disp_glim'.format(tag), fig_to_ndarray_tb(statplot_disp_g.fig), epoch)
     writer.add_image('Image/{}/viz_bbox'.format(tag), fig_to_ndarray_tb(statplot.fig), epoch)
     for k in range(length):
         writer.add_image('Image/{}/viz_glim_{}'.format(tag, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
