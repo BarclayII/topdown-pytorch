@@ -1,0 +1,1 @@
+GLIMPSE_SIZE = (12, 12)
