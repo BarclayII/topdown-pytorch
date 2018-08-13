@@ -19,7 +19,7 @@ def _place_glimpse_on_image(img, row, col, bbox, glim):
     h = int(h)
     w = int(w)
     if h <= 0 or w <= 0:
-        return 
+        return
     rescaled_glim = cv2.resize(
         glim,
         (h, w) #(w, h)
@@ -27,13 +27,13 @@ def _place_glimpse_on_image(img, row, col, bbox, glim):
 
     x_src = 0
     y_src = 0
-    if x >= row or y >= col or x + h < 0 or y + w < 0:
+    if x >= col or y >= row or x + h < 0 or y + w < 0:
         return
 
-    if x + h >= row:
-        h = row - x
-    if y + w >= col:
-        w = col - y
+    if x + h >= col:
+        h = col - x
+    if y + w >= row:
+        w = row - y
     if x < 0:
         x_src = -x
         x = 0
@@ -42,7 +42,7 @@ def _place_glimpse_on_image(img, row, col, bbox, glim):
         y_src = -y
         y = 0
         w -= y_src
-    img[y: y + w,x: x + h,  :] = \
+    img[y: y + w, x: x + h, :] = \
         rescaled_glim[y_src: y_src + w,x_src: x_src + h,  :]
 
 def display_glimpse(channel, row, col, bbox_list, glim_list):

@@ -13,6 +13,16 @@ import itertools
 def num_nodes(lvl, brch):
     return (brch ** (lvl + 1) - 1) // (brch - 1)
 
+def F_ent(dist):
+    """
+    Entropy of Distributions.
+    Input format:
+    (*, C)
+    Output format:
+    (*)
+    """
+    return -(dist * T.log(dist)).sum(dim=-1)
+
 def F_reg_pc(par, chd):
     """
     Regularization term(Parent-Child)
@@ -256,6 +266,10 @@ class TreeBuilder(nn.Module):
 
         return t, (loss_pc * self.pc_coef, loss_cc * self.cc_coef)
 
+class HomoscedasticModule(nn.Module):
+    def __init__(self):
+        super(HomoscedasticModule, self).__init__()
+        self.coef_lambda = nn.Parameter(T.ones(4), requires_grad=True)
 
 class ReadoutModule(nn.Module):
     def __init__(self, h_dims=128, n_classes=10, n_branches=1, n_levels=1):

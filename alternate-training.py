@@ -20,6 +20,7 @@ import tqdm
 
 T.set_num_threads(4)
 
+
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--resume', default=None, help='resume training from checkpoint')
 parser.add_argument('--row', default=200, type=int, help='image rows')
@@ -29,10 +30,11 @@ parser.add_argument('--batch_size', default=32, type=int, help='batch size')
 parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
+parser.add_argument('--hs', action='store_true', help='indicates whether to use homoscedastic uncertainty or not')
 parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
 parser.add_argument('--att_type', default='mean', type=str, help='attention type: mean/naive/tanh')
 parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
-parser.add_argument('--cc_coef', default=1, type=float, help='regularization parameter(child-child)')
+parser.add_argument('--cc_coef', default=0, type=float, help='regularization parameter(child-child)')
 parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
@@ -93,6 +95,18 @@ else:
                             cnn=cnn,))
     readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels, n_classes=n_classes))
 
+if args.hs is True:
+    """
+    0: Cross-Entropy Loss
+    1: Rank Loss
+    2: PC Loss
+    3: CC Loss
+    """
+    hs = cuda(HomoscedasticModule())
+    args.pc_coef = 1
+    args.cc_coef = 1
+    args.rank_coef = 1
+
 train_shuffle = True
 
 n_epochs = args.n
@@ -150,7 +164,8 @@ def train():
 
     n_train_batches = len(train_loader)
 
-    params = list(builder.parameters()) + list(readout.parameters())
+    params = list(builder.parameters()) + list(readout.parameters()) + (list(hs.parameters()) if args.hs else [])
+    print(len(params))
     if args.dataset.startswith('mnist') or args.dataset == 'imagenet':
         lr = 1e-4
         opt = T.optim.RMSprop(params, lr=1e-4)
@@ -194,23 +209,40 @@ def train():
                 train_loss_dict['cc'] += loss_cc.item()
                 readout_list = readout(t)
 
-                total_loss = loss_pc + loss_cc
+                if args.hs:
+                    total_loss =\
+                        loss_pc * hs.coef_lambda[2] +\
+                        loss_cc * hs.coef_lambda[3]
+                else:
+                    total_loss = loss_pc + loss_cc
                 for lvl in range(start_lvl, n_levels + 1):
                     y_pred, att_weights = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
 
                     loss_ce = F.cross_entropy(y_pred, y)
                     train_loss_dict['ce'] += loss_ce.item()
-                    loss = loss_ce
+                    if args.hs:
+                        loss = loss_ce * hs.coef_lambda[0]
+                    else:
+                        loss = loss_ce
 
                     if args.rank and lvl > start_lvl:
                         loss_rank = rank_loss(y_score, y_score_last)
-                        loss = loss + args.rank_coef * loss_rank
+                        if args.hs:
+                            loss = loss + loss_rank * hs.coef_lambda[1]
+                        else:
+                            loss = loss + args.rank_coef * loss_rank
                         train_loss_dict['rank'] += args.rank_coef * loss_rank.item()
 
                     y_score_last = y_score
 
                     total_loss = total_loss + loss
+                    if args.hs:
+                        """
+                        Homoscedastic Loss
+                        """
+                        total_loss = total_loss - (T.log(hs.coef_lambda)).sum()
+
                     current_hit = (y_pred.max(dim=-1)[1] == y).sum().item()
                     levelwise_hit[lvl] += current_hit
 
@@ -247,6 +279,15 @@ def train():
         for key in train_loss_dict.keys():
             train_loss_dict[key] /= n_train_batches
         writer.add_scalars('data/train_loss_dict', train_loss_dict, epoch)
+        if args.hs:
+            coef_lambda = hs.coef_lambda.cpu().tolist()
+            lambda_dict = {
+                'ce': coef_lambda[0],
+                'rank': coef_lambda[1],
+                'pc': coef_lambda[2],
+                'cc': coef_lambda[3]
+            }
+            writer.add_scalars('data/coef_lambda', lambda_dict, epoch)
 
         cnt = 0
         hit = 0
@@ -254,8 +295,6 @@ def train():
         sum_loss = 0
         builder.eval()
         readout.eval()
-        #builder.train()
-        #readout.train()
         with T.no_grad():
             for i, item in enumerate(tqdm.tqdm(valid_loader)):
                 x, y, b = preprocessor(item)
