@@ -1,5 +1,5 @@
 import torchvision
-from torchvision.transforms import ToTensor
+from torchvision.transforms import ToTensor, RandomCrop, RandomHorizontalFlip, Normalize, Compose
 from .mnist import MNISTMulti
 from .wrapper import wrap_output
 from .sampler import SubsetSampler
@@ -60,11 +60,21 @@ def get_generator(args):
         preprocessor = preprocess_mnistmulti
     elif args.dataset == 'cifar10':
         # TODO: test set
-        dataset_train = dataset_valid = torchvision.datasets.CIFAR10('.', download=True, transform=ToTensor())
+        #transform_train = Compose([
+        #    RandomCrop(32, padding=4),
+        #    RandomHorizontalFlip(),
+        #    ToTensor(),
+        #])
+        #transform_test = Compose([
+        #    ToTensor(),
+        #])
+        dataset_train = torchvision.datasets.CIFAR10('.', download=True, transform=ToTensor())
+        dataset_valid = torchvision.datasets.CIFAR10('.', download=True, transform=ToTensor())
         train_sampler = SubsetRandomSampler(range(0, 45000))
         valid_sampler = SubsetSampler(range(45000, 50000))
         loader_train = data_generator_cifar10(dataset_train, args.batch_size, sampler=train_sampler)
         loader_valid = data_generator_cifar10(dataset_valid, args.v_batch_size, sampler=valid_sampler)
+        loader_test = None
         preprocessor = preprocess_cifar10
         args.row = args.col = 32
     elif args.dataset == 'imagenet':
@@ -75,6 +85,7 @@ def get_generator(args):
         valid_sampler = ImageNetBatchSampler(dataset_valid)
         loader_train = data_generator_imagenet(dataset_train, args.batch_size, num_workers=args.num_workers)
         loader_valid = data_generator_imagenet(dataset_valid, args.batch_size, num_workers=args.num_workers)
+        loader_test = None
         preprocessor = preprocess_imagenet
 
     return loader_train, loader_valid, loader_test, preprocessor

@@ -62,7 +62,7 @@ def build_cnn(**config):
 
 
 class WhatModule(nn.Module):
-    def __init__(self, filters, kernel_size, final_pool_size, h_dims, n_classes, cnn=None, in_dims=None):
+    def __init__(self, filters, kernel_size, final_pool_size, h_dims, n_classes, cnn=None, in_dims=None, fix=False):
         super(WhatModule, self).__init__()
         if cnn is None:
             self.cnn = build_cnn(
@@ -71,7 +71,7 @@ class WhatModule(nn.Module):
                 final_pool_size=final_pool_size
             )
             in_dims = filters[-1] * np.prod(final_pool_size)
-        elif cnn.startswith('resnet'):
+        elif isinstance(cnn, str) and cnn.startswith('resnet'):
             cnn = getattr(torchvision.models, cnn)(pretrained=True)
             in_dims = cnn.fc.in_features
             self.cnn = nn.Sequential(
@@ -97,9 +97,16 @@ class WhatModule(nn.Module):
             nn.Linear(h_dims, n_classes),
         )
 
+        self.fix = fix
+
     def forward(self, glimpse_kxk, readout=True):
         batch_size = glimpse_kxk.shape[0]
-        h = self.net_h(self.cnn(glimpse_kxk).view(batch_size, -1))
+        if self.fix:
+            with T.no_grad():
+                h = self.cnn(glimpse_kxk).view(batch_size, -1)
+        else:
+            h = self.cnn(glimpse_kxk).view(batch_size, -1)
+        h = self.net_h(h)
         return h if not readout else self.net_p(h)
 
 
@@ -154,7 +161,6 @@ class TreeBuilder(nn.Module):
                  glimpse_size=(15, 15),
                  what_filters=[16, 32, 64, 128, 256],
                  where_filters=[16, 32],
-                 cnn=None,
                  kernel_size=(3, 3),
                  final_pool_size=(2, 2),
                  h_dims=128,
@@ -166,6 +172,9 @@ class TreeBuilder(nn.Module):
                  glimpse_type='gaussian',
                  pc_coef=0,
                  cc_coef=0,
+                 what__cnn=None,
+                 what__fix=False,
+                 what__in_dims=None,
                  ):
         super(TreeBuilder, self).__init__()
 
@@ -175,7 +184,8 @@ class TreeBuilder(nn.Module):
 
         net_phi = nn.ModuleList(
                 WhatModule(what_filters, kernel_size, final_pool_size, h_dims,
-                           n_classes, cnn)
+                           n_classes, cnn=what__cnn, fix=what__fix,
+                           in_dims=what__in_dims)
                 for _ in range(n_levels + 1)
                 )
         net_b = nn.ModuleList(

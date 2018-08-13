@@ -43,8 +43,12 @@ class ImageNetSingle(Dataset):
         record = self.selection.iloc[i]
         imgpath = os.path.join(self.rootdir, record['imgpath'])
         _img = Image.open(imgpath)
-        height = 200
-        width = int(height * self.target_aspect[i])
+        if self.target_aspect[i] < 1:
+            height = 400
+            width = int(height * self.target_aspect[i])
+        else:
+            width = 400
+            height = int(width / self.target_aspect[i])
 
         _img = _img.convert('RGB').resize((width, height), Image.BILINEAR)
 
@@ -69,7 +73,7 @@ class ImageNetBatchSampler(BatchSampler):
         for p in self.pages:
             q = np.random.permutation(p)
             for i in range(self.batches_per_page):
-                yield p[i*self.batch_size:(i+1)*self.batch_size].tolist()
+                yield q[i*self.batch_size:(i+1)*self.batch_size].tolist()
 
     def __len__(self):
         return len(self.pages) * self.batches_per_page

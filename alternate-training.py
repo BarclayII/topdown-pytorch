@@ -48,6 +48,7 @@ parser.add_argument('--imagenet_valid_sel', default='selected-val.pkl', type=str
 parser.add_argument('--glm_size', default=15, type=int)
 parser.add_argument('--num_workers', default=0, type=int)
 parser.add_argument('--n_gpus', default=1, type=int)
+parser.add_argument('--fix', action='store_true')
 args = parser.parse_args()
 filter_arg_dict = [
         'resume',
@@ -61,7 +62,7 @@ filter_arg_dict = [
         'num_workers',
         'n_gpus',
 ]
-expr_setting = '_'.join('{}-{}'.format(k, v) for k, v in vars(args).items() if not k in filter_arg_dict)
+expr_setting = '_'.join('{}'.format(v) for k, v in vars(args).items() if not k in filter_arg_dict)
 
 train_loader, valid_loader, test_loader, preprocessor = get_generator(args)
 
@@ -72,6 +73,7 @@ n_levels = args.levels
 if args.dataset == 'imagenet':
     n_classes = 1000
     cnn = 'resnet18'
+    in_dims = None
 elif args.dataset == 'cifar10':
     n_classes = 10
     from pytorch_cifar.models import ResNet18
@@ -87,9 +89,11 @@ elif args.dataset == 'cifar10':
             cnn.layer4,
             nn.AdaptiveAvgPool2d(1),
             )
+    in_dims = 512
 elif args.dataset.startswith('mnist'):
     n_classes = 10 ** args.n_digits
     cnn = None
+    in_dims = None
 
 if args.resume is not None:
     builder = T.load('checkpoints/{}_builder_{}.pt'.format(expr_setting, args.resume))
@@ -103,7 +107,9 @@ else:
                             n_classes=n_classes,
                             glimpse_type=args.glm_type,
                             glimpse_size=(args.glm_size, args.glm_size),
-                            cnn=cnn,)))
+                            what__cnn=cnn,
+                            what__fix=args.fix,
+                            what__in_dims=in_dims)))
     readout = cuda(nn.DataParallel(ReadoutModule(n_branches=n_branches, n_levels=n_levels, n_classes=n_classes)))
 
 train_shuffle = True
@@ -156,7 +162,9 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag):
         writer.add_image('Image/{}/viz_glim_{}'.format(tag, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
     plt.close('all')
 
-@profile
+logfile = open('debug.log', 'w')
+
+#@profile
 def train():
     best_epoch = 0
     best_valid_loss = 1e6
@@ -165,13 +173,16 @@ def train():
     n_train_batches = len(train_loader)
 
     params = list(builder.parameters()) + list(readout.parameters())
-    if args.dataset.startswith('mnist') or args.dataset == 'imagenet':
+    if args.dataset.startswith('mnist'):
         lr = 1e-4
-        opt = T.optim.RMSprop(params, lr=1e-4)
+        opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
     elif args.dataset == 'cifar10':
         lr = 0.01
         opt = T.optim.SGD(params, lr=0.01, momentum=0.9, weight_decay=5e-4)
         #opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
+    elif args.dataset == 'imagenet':
+        lr = 0.1
+        opt = T.optim.RMSprop(params, lr=3e-5, weight_decay=1e-4)
 
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
@@ -195,15 +206,16 @@ def train():
             #x, y, b = preprocessor(next(train_iter))
             for i, item in enumerate(tq):
                 x, y, b = preprocessor(item)
+                print(x.shape, y.shape, file=logfile)
 
-                if args.dataset == 'imagenet':
+                if args.dataset == 'imagenet' or args.dataset == 'cifar10':
                     x_in = imagenet_normalize(x)
                 else:
                     x_in = x
 
                 total_loss = 0
 
-                t, (loss_pc, loss_cc) = builder(x_in)
+                t, (loss_pc, loss_cc) = builder(x_in, min(epoch // 20, 2))
                 loss_pc = loss_pc.mean()
                 loss_cc = loss_cc.mean()
                 train_loss_dict['pc'] += loss_pc.item()
@@ -240,7 +252,7 @@ def train():
 
                 if i == 0:
                     sample_imgs = x[:10]
-                    bbox_scaler = T.FloatTensor([[x.shape[2], x.shape[3], x.shape[2], x.shape[3]]]).to(x)
+                    bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
                     length = len(t)
                     sample_bboxs = [
                             glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * bbox_scaler)
@@ -275,13 +287,14 @@ def train():
         with T.no_grad():
             for i, item in enumerate(tqdm.tqdm(valid_loader)):
                 x, y, b = preprocessor(item)
-                if args.dataset == 'imagenet':
+                print(x.shape, y.shape, file=logfile)
+                if args.dataset == 'imagenet' or args.dataset == 'cifar10':
                     x_in = imagenet_normalize(x)
                 else:
                     x_in = x
 
                 total_loss = 0
-                t, _ = builder(x_in)
+                t, _ = builder(x_in, min(epoch // 20, 2))
                 readout_list = readout(t)
 
                 for lvl in range(start_lvl, n_levels + 1):
@@ -299,7 +312,7 @@ def train():
                 if i == 0:
                     sample_imgs = x[:10]
                     length = len(t)
-                    bbox_scaler = T.FloatTensor([[x.shape[2], x.shape[3], x.shape[2], x.shape[3]]]).to(x)
+                    bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
                     sample_bboxs = [
                             glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * bbox_scaler)
                             for k in range(1, length)
@@ -340,7 +353,7 @@ def train():
                 pg['lr'] = lr
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
-        elif best_epoch < epoch - 5:
+        elif best_epoch < epoch - 5 and test_loader is not None:
             print('Early Stopping...')
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
@@ -351,13 +364,13 @@ def train():
             with T.no_grad():
                 for i, item in enumerate(tqdm.tqdm(test_loader)):
                     x, y, b = preprocessor(item)
-                    if args.dataset == 'imagenet':
+                    if args.dataset == 'imagenet' or args.dataset == 'cifar10':
                         x_in = imagenet_normalize(x)
                     else:
                         x_in = x
 
                     total_loss = 0
-                    t, _ = builder(x_in)
+                    t, _ = builder(x_in, min(epoch // 20, 2))
                     readout_list = readout(t)
 
                     for lvl in range(start_lvl, n_levels + 1):
