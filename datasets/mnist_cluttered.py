@@ -39,8 +39,8 @@ def placeSpriteRandomly(obs, sprite, border, idx=0, n=1):
 
     min_h = (h // n) * idx
     max_h = (h // n) * (idx + 1)
-    min_w = (w // n) * idx
-    max_w = (w // n) * (idx + 1)
+    min_w = 0
+    max_w = w
     y = np.random.randint(min_h + border, max_h - spriteH - border)
     x = np.random.randint(min_w + border, max_w - spriteW - border)
 

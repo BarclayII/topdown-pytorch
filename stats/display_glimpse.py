@@ -12,28 +12,29 @@ def resize_img(img, x, y):
             ret_img[i, j, :] = img[i_src, j_src, :]
     return ret_img
 
-def _place_glimpse_on_image(img, row, col, bbox, glim):
+def _place_glimpse_on_image(img, bbox, glim):
     x, y, h, w = bbox
-    x = int(x)
-    y = int(y)
-    h = int(h)
-    w = int(w)
+    row, col = img.shape[:2]
+    y, x = int(x), int(y)
+    w, h = int(h), int(w)
+
     if h <= 0 or w <= 0:
         return
+
     rescaled_glim = cv2.resize(
         glim,
-        (h, w) #(w, h)
+        (w, h) #(h, w)
     )
 
     x_src = 0
     y_src = 0
-    if x >= col or y >= row or x + h < 0 or y + w < 0:
+    if x >= row or y >= col or x + h < 0 or y + w < 0:
         return
 
-    if x + h >= col:
-        h = col - x
-    if y + w >= row:
-        w = row - y
+    if x + h >= row:
+        h = row - x
+    if y + w >= col:
+        w = col - y
     if x < 0:
         x_src = -x
         x = 0
@@ -42,8 +43,9 @@ def _place_glimpse_on_image(img, row, col, bbox, glim):
         y_src = -y
         y = 0
         w -= y_src
-    img[y: y + w, x: x + h, :] = \
-        rescaled_glim[y_src: y_src + w,x_src: x_src + h,  :]
+
+    img[x: x + h, y: y + w, :] = \
+        rescaled_glim[x_src: x_src + h, y_src: y_src + w, :]
 
 def display_glimpse(channel, row, col, bbox_list, glim_list):
     ret_img = np.zeros((row, col, channel))
@@ -57,5 +59,6 @@ def display_glimpse(channel, row, col, bbox_list, glim_list):
         glim = glim_list[idx]
         if isinstance(glim, T.Tensor):
             glim = glim.cpu().numpy()
-        _place_glimpse_on_image(ret_img, row, col, bbox, glim)
+        glim = glim.transpose(1, 0, 2)
+        _place_glimpse_on_image(ret_img.transpose(1, 0, 2), bbox, glim)
     return ret_img

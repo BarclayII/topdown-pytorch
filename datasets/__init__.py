@@ -4,6 +4,7 @@ from .mnist import MNISTMulti
 from .wrapper import wrap_output
 from .sampler import SubsetSampler
 from .imagenet import ImageNetSingle, ImageNetBatchSampler
+from .flower.dataset import FlowerSingle
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
 from util import cuda
@@ -47,6 +48,14 @@ def preprocess_imagenet(item):
     _x, _y, _ = item
     return cuda(_x), cuda(_y.squeeze(1)), None
 
+def data_generator_flower(dataset, batch_size, **config):
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=config['shuffle'], drop_last=True, num_workers=0)
+    return dataloader
+
+def preprocess_flower(item):
+    _x, _y = item
+    return cuda(_x), cuda(_y.squeeze(1)), None
+
 def get_generator(args):
     if args.dataset.startswith('mnist'):
         cluttered = args.dataset.endswith('cluttered')
@@ -67,6 +76,14 @@ def get_generator(args):
         loader_valid = data_generator_cifar10(dataset_valid, args.v_batch_size, sampler=valid_sampler)
         preprocessor = preprocess_cifar10
         args.row = args.col = 32
+    elif args.dataset == 'flower':
+        dataset_train = FlowerSingle('train')
+        dataset_valid = FlowerSingle('valid')
+        dataset_test = FlowerSingle('test')
+        loader_train = data_generator_flower(dataset_train, args.batch_size, shuffle=True)
+        loader_valid = data_generator_flower(dataset_valid, args.batch_size, shuffle=False)
+        loader_test = data_generator_flower(dataset_test, args.batch_size, shuffle=False)
+        preprocessor = preprocess_flower
     elif args.dataset == 'imagenet':
         # TODO: test set
         dataset_train = ImageNetSingle(args.imagenet_root, args.imagenet_train_sel, args.batch_size)

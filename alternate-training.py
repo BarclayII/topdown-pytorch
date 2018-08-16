@@ -41,7 +41,7 @@ parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
-parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, mnistcluttered, cifar10, imagenet)')
+parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, mnistcluttered, cifar10, imagenet, flower)')
 parser.add_argument('--n_digits', default=1, type=int, help='indicate number of digits in multimnist dataset')
 parser.add_argument('--v_batch_size', default=32, type=int, help='valid batch size')
 parser.add_argument('--size_min', default=28 // 3 * 2, type=int, help='Object minimum size')
@@ -79,6 +79,21 @@ elif args.dataset == 'cifar10':
 elif args.dataset.startswith('mnist'):
     n_classes = 10 ** args.n_digits
     cnn = None
+elif args.dataset == 'flower':
+    n_classes = 102
+    cnn = 'resnet18'
+
+if args.hs is True:
+    """
+    0: Cross-Entropy Loss
+    1: Rank Loss
+    2: PC Loss
+    3: CC Loss
+    """
+    hs = cuda(HomoscedasticModule())
+    args.pc_coef = 1
+    args.cc_coef = 0
+    args.rank_coef = 1
 
 if args.resume is not None:
     builder = T.load('checkpoints/{}_builder_{}.pt'.format(expr_setting, args.resume))
@@ -94,18 +109,6 @@ else:
                             glimpse_size=GLIMPSE_SIZE,
                             cnn=cnn,))
     readout = cuda(ReadoutModule(n_branches=n_branches, n_levels=n_levels, n_classes=n_classes))
-
-if args.hs is True:
-    """
-    0: Cross-Entropy Loss
-    1: Rank Loss
-    2: PC Loss
-    3: CC Loss
-    """
-    hs = cuda(HomoscedasticModule())
-    args.pc_coef = 1
-    args.cc_coef = 1
-    args.rank_coef = 1
 
 train_shuffle = True
 
@@ -165,7 +168,6 @@ def train():
     n_train_batches = len(train_loader)
 
     params = list(builder.parameters()) + list(readout.parameters()) + (list(hs.parameters()) if args.hs else [])
-    print(len(params))
     if args.dataset.startswith('mnist') or args.dataset == 'imagenet':
         lr = 1e-4
         opt = T.optim.RMSprop(params, lr=1e-4)
@@ -173,6 +175,9 @@ def train():
         lr = 0.01
         opt = T.optim.SGD(params, lr=0.01, momentum=0.9, weight_decay=5e-4)
         #opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
+    elif args.dataset == 'flower':
+        lr = 1e-4
+        opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
 
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
@@ -197,7 +202,7 @@ def train():
             for i, item in enumerate(tq):
                 x, y, b = preprocessor(item)
 
-                if args.dataset == 'imagenet':
+                if args.dataset == 'imagenet' or args.dataset == 'flower':
                     x_in = imagenet_normalize(x)
                 else:
                     x_in = x
@@ -259,7 +264,7 @@ def train():
                     bbox_scaler = T.FloatTensor([[x.shape[2], x.shape[3], x.shape[2], x.shape[3]]]).to(x)
                     length = len(t)
                     sample_bboxs = [
-                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * bbox_scaler)
+                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
                             for k in range(1, length)
                             ]
                     sample_g_arr = [t[_].g[:10].detach() for _ in range(length)]
@@ -298,7 +303,7 @@ def train():
         with T.no_grad():
             for i, item in enumerate(tqdm.tqdm(valid_loader)):
                 x, y, b = preprocessor(item)
-                if args.dataset == 'imagenet':
+                if args.dataset == 'imagenet' or args.dataset == 'flower':
                     x_in = imagenet_normalize(x)
                 else:
                     x_in = x
@@ -324,7 +329,7 @@ def train():
                     length = len(t)
                     bbox_scaler = T.FloatTensor([[x.shape[2], x.shape[3], x.shape[2], x.shape[3]]]).to(x)
                     sample_bboxs = [
-                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * bbox_scaler)
+                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
                             for k in range(1, length)
                             ]
                     sample_g_arr = [t[_].g[:10] for _ in range(length)]
@@ -374,7 +379,7 @@ def train():
             with T.no_grad():
                 for i, item in enumerate(tqdm.tqdm(test_loader)):
                     x, y, b = preprocessor(item)
-                    if args.dataset == 'imagenet':
+                    if args.dataset == 'imagenet' or args.dataset == 'flower':
                         x_in = imagenet_normalize(x)
                     else:
                         x_in = x
