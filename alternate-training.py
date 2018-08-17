@@ -128,15 +128,20 @@ def imagenet_normalize(x):
     x = (x - mean[None, :, None, None]) / std[None, :, None, None]
     return x
 
-def viz(epoch, imgs, bboxes, g_arr, att, tag):
+available_clrs = ['y', 'r', 'g', 'b']
+def viz(epoch, imgs, bboxes, g_arr, att, tag, n_branches=2, n_levels=2):
     length = len(g_arr)
     statplot = StatPlot(5, 2)
     statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
+
+    clrs = []
+    for j in range(n_levels + 1):
+        clrs += [available_clrs[j]] * (n_branches ** j)
     for j in range(10):
         statplot.add_image(
             imgs[j].permute(1, 2, 0),
             bboxs=[bbox[j] for bbox in bboxes],
-            clrs=['y', 'y', 'r', 'r', 'r', 'r'],
+            clrs=clrs, #['y', 'y', 'r', 'r', 'r', 'r'],
             lws=att[j, 1:] * length
         )
         for k in range(length):
@@ -146,7 +151,7 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag):
     channel, row, col = imgs[-1].shape
     for j in range(10):
         bbox_list = [
-            np.array([0, 0, row, col])
+            np.array([0, 0, col, row])
         ] + [
             bbox_batch[j] for bbox_batch in bboxes
         ]
@@ -261,7 +266,7 @@ def train():
 
                 if i == 0:
                     sample_imgs = x[:10]
-                    bbox_scaler = T.FloatTensor([[x.shape[2], x.shape[3], x.shape[2], x.shape[3]]]).to(x)
+                    bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
                     length = len(t)
                     sample_bboxs = [
                             glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
@@ -270,7 +275,7 @@ def train():
                     sample_g_arr = [t[_].g[:10].detach() for _ in range(length)]
                     sample_atts = att_weights.detach().cpu().numpy()[:10]
 
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'train')
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'train', n_branches=n_branches, n_levels=n_levels)
 
                 tq.set_postfix({
                     'train_loss': total_loss.item(),
@@ -327,7 +332,7 @@ def train():
                 if i == 0:
                     sample_imgs = x[:10]
                     length = len(t)
-                    bbox_scaler = T.FloatTensor([[x.shape[2], x.shape[3], x.shape[2], x.shape[3]]]).to(x)
+                    bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
                     sample_bboxs = [
                             glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
                             for k in range(1, length)
@@ -335,7 +340,7 @@ def train():
                     sample_g_arr = [t[_].g[:10] for _ in range(length)]
                     sample_atts = att_weights.cpu().numpy()[:10]
 
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'valid')
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'valid', n_branches=n_branches, n_levels=n_levels)
 
         avg_loss = sum_loss / i
         acc = hit * 1.0 / cnt

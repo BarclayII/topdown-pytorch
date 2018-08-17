@@ -23,7 +23,7 @@ def _place_glimpse_on_image(img, bbox, glim):
 
     rescaled_glim = cv2.resize(
         glim,
-        (w, h) #(h, w)
+        (w, h) #(h, w) #(h, w)
     )
 
     x_src = 0
@@ -59,6 +59,6 @@ def display_glimpse(channel, row, col, bbox_list, glim_list):
         glim = glim_list[idx]
         if isinstance(glim, T.Tensor):
             glim = glim.cpu().numpy()
-        glim = glim.transpose(1, 0, 2)
-        _place_glimpse_on_image(ret_img.transpose(1, 0, 2), bbox, glim)
+        glim = glim
+        _place_glimpse_on_image(ret_img, bbox, glim)
     return ret_img
