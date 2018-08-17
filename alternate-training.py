@@ -135,8 +135,8 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag, n_branches=2, n_levels=2):
     statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
 
     clrs = []
-    for j in range(n_levels + 1):
-        clrs += [available_clrs[j]] * (n_branches ** j)
+    for j in range(n_levels):
+        clrs += [available_clrs[j]] * (n_branches ** (j + 1))
     for j in range(10):
         statplot.add_image(
             imgs[j].permute(1, 2, 0),
