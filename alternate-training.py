@@ -260,7 +260,7 @@ def train():
                         loss_cc * hs.coef_lambda[3]
                 else:
                     total_loss = loss_pc + loss_cc
-                for lvl in range(start_lvl, levels):
+                for lvl in range(start_lvl, levels + 1):
                     y_pred, att_weights = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
 
