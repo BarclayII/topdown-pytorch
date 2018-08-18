@@ -35,6 +35,7 @@ parser.add_argument('--cc_coef', default=0, type=float, help='regularization par
 parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
+parser.add_argument('--levels_from', default=2, type=int, help='levels from')
 parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
@@ -197,7 +198,7 @@ def train():
     best_epoch = 0
     best_valid_loss = 1e6
     best_acc = 0
-    levels = 0
+    levels = args.levels_from
 
     n_train_batches = len(train_loader)
 
@@ -209,7 +210,7 @@ def train():
         lr = 0.01
         opt = T.optim.SGD(params, lr=0.01, momentum=0.9, weight_decay=1e-4)
         #opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
-    elif args.dataset in ['imagenet']:
+    elif args.dataset in ['imagenet', 'dogs']:
         lr = 0.1
         opt = T.optim.RMSprop(params, lr=3e-5, weight_decay=1e-4)
     elif args.dataset == 'flower':
@@ -219,7 +220,7 @@ def train():
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
 
-        start_lvl = 0
+        readout_start_lvl = levels
         sum_loss = 0
         train_loss_dict = {
                 'pc': 0.,
@@ -260,7 +261,7 @@ def train():
                         loss_cc * hs.coef_lambda[3]
                 else:
                     total_loss = loss_pc + loss_cc
-                for lvl in range(start_lvl, levels + 1):
+                for lvl in range(readout_start_lvl, levels + 1):
                     y_pred, att_weights = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
 
@@ -271,7 +272,7 @@ def train():
                     else:
                         loss = loss_ce
 
-                    if args.rank and lvl > start_lvl:
+                    if args.rank and lvl > readout_start_lvl:
                         loss_rank = rank_loss(y_score, y_score_last)
                         if args.hs:
                             loss = loss + loss_rank * hs.coef_lambda[1]
@@ -353,7 +354,7 @@ def train():
                 t, _ = builder(x_in, levels)
                 readout_list = readout(t, levels)
 
-                for lvl in range(start_lvl, levels + 1):
+                for lvl in range(readout_start_lvl, levels + 1):
                     y_pred, att_weights = readout_list[lvl]
                     loss = F.cross_entropy(
                         y_pred, y
@@ -433,7 +434,7 @@ def train():
                     t, _ = builder(x_in, levels)
                     readout_list = readout(t, levels)
 
-                    for lvl in range(start_lvl, levels + 1):
+                    for lvl in range(readout_start_lvl, levels + 1):
                         y_pred, att_weights = readout_list[lvl]
                         loss = F.cross_entropy(
                             y_pred, y

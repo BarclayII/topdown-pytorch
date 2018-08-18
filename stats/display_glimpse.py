@@ -13,10 +13,12 @@ def resize_img(img, x, y):
     return ret_img
 
 def _place_glimpse_on_image(img, bbox, glim):
-    x, y, h, w = bbox
+    x, y, w, h = bbox
     row, col = img.shape[:2]
-    y, x = int(x), int(y)
-    w, h = int(h), int(w)
+    x = int(x)
+    y = int(y)
+    w = int(w)
+    h = int(h)
 
     if h <= 0 or w <= 0:
         return
@@ -38,14 +40,14 @@ def _place_glimpse_on_image(img, bbox, glim):
     if x < 0:
         x_src = -x
         x = 0
-        h -= x_src
+        w -= x_src
     if y < 0:
         y_src = -y
         y = 0
-        w -= y_src
+        h -= y_src
 
-    img[x: x + h, y: y + w, :] = \
-        rescaled_glim[x_src: x_src + h, y_src: y_src + w, :]
+    img[y: y + h, x: x + w, :] = \
+        rescaled_glim[y_src: y_src + h, x_src: x_src + w, :]
 
 def display_glimpse(channel, row, col, bbox_list, glim_list):
     ret_img = np.zeros((row, col, channel))
