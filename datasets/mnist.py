@@ -115,7 +115,7 @@ class MNISTMulti(Dataset):
                     nDigits=self.n_digits,
                     num_dist=num_dist
                 )
-                n = dataset.nExamples * size_multiplier
+                n = dataset.nExamples * size_multiplier * n_digits
                 data, labels = dataset.get_bunch(n)
                 locs = T.LongTensor(n, n_digits, 4).zero_()
                 T.save({

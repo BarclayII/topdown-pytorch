@@ -13,6 +13,16 @@ import itertools
 def num_nodes(lvl, brch):
     return (brch ** (lvl + 1) - 1) // (brch - 1)
 
+def F_ent(dist, eps=1e-8):
+    """
+    Entropy of Distributions.
+    Input format:
+    (*, C)
+    Output format:
+    (*)
+    """
+    return -(dist * T.log(dist + eps)).sum(dim=-1)
+
 def F_reg_pc(par, chd):
     """
     Regularization term(Parent-Child)
@@ -220,16 +230,29 @@ class TreeBuilder(nn.Module):
                 if self.n_branches > 1 \
                 else range(level, level + 1)
 
-    #@profile
+    def forward_layer(self, x, l, b):
+        batch_size, _, _, _ = x.shape
+        bbox, _ = self.glimpse.rescale(b, False)
+        g = self.glimpse(x, bbox)
+        n_glimpses = g.shape[1]
+        g_flat = g.view(batch_size * n_glimpses, *g.shape[2:])
+        phi = self.net_phi[l](g_flat, readout=False)
+        h_b = self.net_b_to_h[l](b.view(batch_size * n_glimpses, self.g_dims))
+        h = T.cat([phi, h_b], dim=-1)
+        att = self.net_att(h).view(batch_size, n_glimpses, -1)
+        delta_b = (self.net_b[l](h)
+                    .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
+        new_b = b[:, :, None] + delta_b
+        h = h.view(batch_size, n_glimpses, *h.shape[1:])
+        return bbox, g, att, new_b, h
+
     def forward(self, x, lvl=None):
         if lvl is None:
             lvl = self.n_levels
 
-        batch_size, n_channels, n_rows, n_cols = x.shape
-
         t = [TreeItem() for _ in range(num_nodes(lvl, self.n_branches))]
         # root init
-        t[0].b = x.new(batch_size, self.g_dims).zero_()
+        t[0].b = x.new(x.shape[0], self.g_dims).zero_()
 
         loss_pc = 0
         loss_cc = 0
@@ -240,23 +263,9 @@ class TreeBuilder(nn.Module):
 
         for l in range(0, lvl + 1):
             current_level = self.noderange(l)
-
             b = T.stack([t[i].b for i in current_level], 1)
-            bbox, _ = self.glimpse.rescale(b, False)
-            g = self.glimpse(x, bbox)
-            n_glimpses = g.shape[1]
-            g_flat = g.view(batch_size * n_glimpses, *g.shape[2:])
-            phi = self.net_phi[l](g_flat, readout=False)
-            h_b = self.net_b_to_h[l](b.view(batch_size * n_glimpses, self.g_dims))
-            h = T.cat([phi, h_b], dim=-1)
-            att = self.net_att(h).view(batch_size, n_glimpses, -1)
-
-            delta_b = (self.net_b[l](h)
-                       .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
-            new_b = b[:, :, None] + delta_b
-
-            h = h.view(batch_size, n_glimpses, *h.shape[1:])
-
+            bbox, g, att, new_b, h = self.forward_layer(x, l, b)
+            # propagate
             for k, i in enumerate(current_level):
                 t[i].bbox = bbox[:, k]
                 t[i].g = g[:, k]
@@ -279,6 +288,10 @@ class TreeBuilder(nn.Module):
 
         return t, (loss_pc * self.pc_coef, loss_cc * self.cc_coef)
 
+class HomoscedasticModule(nn.Module):
+    def __init__(self):
+        super(HomoscedasticModule, self).__init__()
+        self.coef_lambda = nn.Parameter(T.ones(4), requires_grad=True)
 
 class ReadoutModule(nn.Module):
     def __init__(self, h_dims=128, n_classes=10, n_branches=1, n_levels=1):
@@ -298,10 +311,9 @@ class ReadoutModule(nn.Module):
             results.append((self.predictor((h * att).sum(dim=1)), att.squeeze(-1)))
         return results
 
-
 class MultiscaleGlimpse(nn.Module):
     multiplier = cuda(T.FloatTensor(
-            [#[1, 1, 0.5, 0.5, 0.5, 0.5],
+        [#[1, 1, 0.5, 0.5, 0.5, 0.5],
              [1, 1, 1, 1, 1, 1],
              #[1, 1, 1.5, 1.5, 1.5, 1.5],
              ]

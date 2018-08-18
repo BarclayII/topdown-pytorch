@@ -27,17 +27,18 @@ parser.add_argument('--batch_size', default=32, type=int, help='batch size')
 parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
+parser.add_argument('--hs', action='store_true', help='indicates whether to use homoscedastic uncertainty or not')
 parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
 parser.add_argument('--att_type', default='mean', type=str, help='attention type: mean/naive/tanh')
 parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
-parser.add_argument('--cc_coef', default=1, type=float, help='regularization parameter(child-child)')
+parser.add_argument('--cc_coef', default=0, type=float, help='regularization parameter(child-child)')
 parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
-parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, mnistcluttered, cifar10, imagenet)')
+parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, mnistcluttered, cifar10, imagenet, flower)')
 parser.add_argument('--n_digits', default=1, type=int, help='indicate number of digits in multimnist dataset')
 parser.add_argument('--v_batch_size', default=32, type=int, help='valid batch size')
 parser.add_argument('--size_min', default=28 // 3 * 2, type=int, help='Object minimum size')
@@ -94,6 +95,22 @@ elif args.dataset.startswith('mnist'):
     n_classes = 10 ** args.n_digits
     cnn = None
     in_dims = None
+elif args.dataset == 'flower':
+    n_classes = 102
+    cnn = 'resnet18'
+    in_dims = None
+
+if args.hs is True:
+    """
+    0: Cross-Entropy Loss
+    1: Rank Loss
+    2: PC Loss
+    3: CC Loss
+    """
+    hs = cuda(HomoscedasticModule())
+    args.pc_coef = 1
+    args.cc_coef = 0
+    args.rank_coef = 1
 
 if args.resume is not None:
     builder = T.load('checkpoints/{}_builder_{}.pt'.format(expr_setting, args.resume))
@@ -130,15 +147,20 @@ def imagenet_normalize(x):
     x = (x - mean[None, :, None, None]) / std[None, :, None, None]
     return x
 
-def viz(epoch, imgs, bboxes, g_arr, att, tag):
+available_clrs = ['y', 'r', 'g', 'b']
+def viz(epoch, imgs, bboxes, g_arr, att, tag, n_branches=2, n_levels=2):
     length = len(g_arr)
     statplot = StatPlot(5, 2)
     statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
+
+    clrs = []
+    for j in range(n_levels):
+        clrs += [available_clrs[j]] * (n_branches ** (j + 1))
     for j in range(10):
         statplot.add_image(
             imgs[j].permute(1, 2, 0),
             bboxs=[bbox[j] for bbox in bboxes],
-            clrs=['y', 'y', 'r', 'r', 'r', 'r'],
+            clrs=clrs, #['y', 'y', 'r', 'r', 'r', 'r'],
             lws=att[j, 1:] * length
         )
         for k in range(length):
@@ -148,7 +170,7 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag):
     channel, row, col = imgs[-1].shape
     for j in range(10):
         bbox_list = [
-            np.array([0, 0, row, col])
+            np.array([0, 0, col, row])
         ] + [
             bbox_batch[j] for bbox_batch in bboxes
         ]
@@ -172,7 +194,7 @@ def train():
 
     n_train_batches = len(train_loader)
 
-    params = list(builder.parameters()) + list(readout.parameters())
+    params = list(builder.parameters()) + list(readout.parameters()) + (list(hs.parameters()) if args.hs else [])
     if args.dataset.startswith('mnist'):
         lr = 1e-4
         opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
@@ -183,6 +205,9 @@ def train():
     elif args.dataset == 'imagenet':
         lr = 0.1
         opt = T.optim.RMSprop(params, lr=3e-5, weight_decay=1e-4)
+    elif args.dataset == 'flower':
+        lr = 1e-4
+        opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
 
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
@@ -208,7 +233,7 @@ def train():
                 x, y, b = preprocessor(item)
                 print(x.shape, y.shape, file=logfile)
 
-                if args.dataset == 'imagenet' or args.dataset == 'cifar10':
+                if args.dataset in ['cifar10', 'imagenet', 'flower']:
                     x_in = imagenet_normalize(x)
                 else:
                     x_in = x
@@ -222,23 +247,40 @@ def train():
                 train_loss_dict['cc'] += loss_cc.item()
                 readout_list = readout(t)
 
-                total_loss = loss_pc + loss_cc
+                if args.hs:
+                    total_loss =\
+                        loss_pc * hs.coef_lambda[2] +\
+                        loss_cc * hs.coef_lambda[3]
+                else:
+                    total_loss = loss_pc + loss_cc
                 for lvl in range(start_lvl, n_levels + 1):
                     y_pred, att_weights = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
 
                     loss_ce = F.cross_entropy(y_pred, y)
                     train_loss_dict['ce'] += loss_ce.item()
-                    loss = loss_ce
+                    if args.hs:
+                        loss = loss_ce * hs.coef_lambda[0]
+                    else:
+                        loss = loss_ce
 
                     if args.rank and lvl > start_lvl:
                         loss_rank = rank_loss(y_score, y_score_last)
-                        loss = loss + args.rank_coef * loss_rank
+                        if args.hs:
+                            loss = loss + loss_rank * hs.coef_lambda[1]
+                        else:
+                            loss = loss + args.rank_coef * loss_rank
                         train_loss_dict['rank'] += args.rank_coef * loss_rank.item()
 
                     y_score_last = y_score
 
                     total_loss = total_loss + loss
+                    if args.hs:
+                        """
+                        Homoscedastic Loss
+                        """
+                        total_loss = total_loss - (T.log(hs.coef_lambda)).sum()
+
                     current_hit = (y_pred.max(dim=-1)[1] == y).sum().item()
                     levelwise_hit[lvl] += current_hit
 
@@ -255,13 +297,13 @@ def train():
                     bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
                     length = len(t)
                     sample_bboxs = [
-                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * bbox_scaler)
+                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
                             for k in range(1, length)
                             ]
                     sample_g_arr = [t[_].g[:10].detach() for _ in range(length)]
                     sample_atts = att_weights.detach().cpu().numpy()[:10]
 
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'train')
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'train', n_branches=n_branches, n_levels=n_levels)
 
                 tq.set_postfix({
                     'train_loss': total_loss.item(),
@@ -275,6 +317,15 @@ def train():
         for key in train_loss_dict.keys():
             train_loss_dict[key] /= n_train_batches
         writer.add_scalars('data/train_loss_dict', train_loss_dict, epoch)
+        if args.hs:
+            coef_lambda = hs.coef_lambda.cpu().tolist()
+            lambda_dict = {
+                'ce': coef_lambda[0],
+                'rank': coef_lambda[1],
+                'pc': coef_lambda[2],
+                'cc': coef_lambda[3]
+            }
+            writer.add_scalars('data/coef_lambda', lambda_dict, epoch)
 
         cnt = 0
         hit = 0
@@ -282,13 +333,11 @@ def train():
         sum_loss = 0
         builder.eval()
         readout.eval()
-        #builder.train()
-        #readout.train()
         with T.no_grad():
             for i, item in enumerate(tqdm.tqdm(valid_loader)):
                 x, y, b = preprocessor(item)
                 print(x.shape, y.shape, file=logfile)
-                if args.dataset == 'imagenet' or args.dataset == 'cifar10':
+                if args.dataset in ['cifar10', 'imagenet', 'flower']:
                     x_in = imagenet_normalize(x)
                 else:
                     x_in = x
@@ -314,13 +363,13 @@ def train():
                     length = len(t)
                     bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
                     sample_bboxs = [
-                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach() * bbox_scaler)
+                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
                             for k in range(1, length)
                             ]
                     sample_g_arr = [t[_].g[:10] for _ in range(length)]
                     sample_atts = att_weights.cpu().numpy()[:10]
 
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'valid')
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'valid', n_branches=n_branches, n_levels=n_levels)
 
         avg_loss = sum_loss / i
         acc = hit * 1.0 / cnt
@@ -364,7 +413,7 @@ def train():
             with T.no_grad():
                 for i, item in enumerate(tqdm.tqdm(test_loader)):
                     x, y, b = preprocessor(item)
-                    if args.dataset == 'imagenet' or args.dataset == 'cifar10':
+                    if args.dataset in ['cifar10', 'imagenet', 'flower']:
                         x_in = imagenet_normalize(x)
                     else:
                         x_in = x

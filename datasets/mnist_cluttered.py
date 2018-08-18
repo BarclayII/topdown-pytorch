@@ -29,7 +29,7 @@ def placeDistractors(config, patch, examples):
             d_patch[s_y: s_y + dist_w, s_x: s_x + dist_w]
         patch.clamp_(max=1)
 
-def placeSpriteRandomly(obs, sprite, border):
+def placeSpriteRandomly(obs, sprite, border, idx=0, n=1):
     assert obs.dim() == 2, 'expecting an image'
     assert sprite.dim() == 2, 'expecting a sprite'
     h = obs.size(0)
@@ -37,8 +37,12 @@ def placeSpriteRandomly(obs, sprite, border):
     spriteH = sprite.size(0)
     spriteW = sprite.size(1)
 
-    y = np.random.randint(border, h - spriteH - border)
-    x = np.random.randint(border, w - spriteW - border)
+    min_h = (h // n) * idx
+    max_h = (h // n) * (idx + 1)
+    min_w = 0
+    max_w = w
+    y = np.random.randint(min_h + border, max_h - spriteH - border)
+    x = np.random.randint(min_w + border, max_w - spriteW - border)
 
     subTensor = obs[y: y + spriteH, x: x + spriteW]
     subTensor += sprite
@@ -78,7 +82,7 @@ class ClutteredMNIST(object):
                 self._step = 0
 
             sprite = self.data[self._perm[self._step]]
-            placeSpriteRandomly(obs, sprite, self.config['border'])
+            placeSpriteRandomly(obs, sprite, self.config['border'], idx=i, n=self.config['nDigits'])
 
             selectedDigit = self.labels[self._perm[self._step]]
             lbls[i] = selectedDigit
