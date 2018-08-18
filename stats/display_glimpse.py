@@ -28,13 +28,13 @@ def _place_glimpse_on_image(img, bbox, glim):
 
     x_src = 0
     y_src = 0
-    if x >= row or y >= col or x + h < 0 or y + w < 0:
+    if x >= col or y >= row or x + w < 0 or y + h < 0:
         return
 
-    if x + h >= row:
-        h = row - x
-    if y + w >= col:
-        w = col - y
+    if x + w >= col:
+        w = col - x
+    if y + h >= row:
+        h = row - y
     if x < 0:
         x_src = -x
         x = 0
@@ -50,7 +50,7 @@ def _place_glimpse_on_image(img, bbox, glim):
 def display_glimpse(channel, row, col, bbox_list, glim_list):
     ret_img = np.zeros((row, col, channel))
     size_idx_list = list(
-        zip([h * w for (x, y, h, w) in bbox_list], range(len(bbox_list))))
+        zip([h * w for (x, y, w, h) in bbox_list], range(len(bbox_list))))
     size_idx_list.sort(
         key = lambda x: x[0], reverse=True)
     idx_orderlist = [_[1] for _ in size_idx_list]

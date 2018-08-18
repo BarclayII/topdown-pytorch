@@ -301,10 +301,12 @@ class ReadoutModule(nn.Module):
         self.n_branches = n_branches
         self.n_levels = n_levels
 
-    def forward(self, t):
+    def forward(self, t, lvls=None):
+        if lvls is None:
+            lvls = self.n_levels
         #nodes = t[-self.n_branches ** self.n_levels:]
         results = []
-        for lvl in range(self.n_levels + 1):
+        for lvl in range(lvls + 1):
             nodes = t[:num_nodes(lvl, self.n_branches)]
             att = F.softmax(T.stack([node.att for node in nodes], 1), dim=1)
             h = T.stack([node.h for node in nodes], 1)

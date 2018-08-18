@@ -40,7 +40,7 @@ def data_generator_imagenet(dataset, batch_size, **config):
     num_workers = config['num_workers']
     dataloader = DataLoader(dataset,
                             batch_sampler=ImageNetBatchSampler(dataset),
-                            num_workers=8,
+                            num_workers=num_workers,
                             )
     return dataloader
 
@@ -94,7 +94,7 @@ def get_generator(args):
         loader_valid = data_generator_flower(dataset_valid, args.batch_size, shuffle=False)
         loader_test = data_generator_flower(dataset_test, args.batch_size, shuffle=False)
         preprocessor = preprocess_flower
-    elif args.dataset == 'imagenet':
+    elif args.dataset in ['imagenet', 'dogs']:
         # TODO: test set
         dataset_train = ImageNetSingle(args.imagenet_root, args.imagenet_train_sel, args.batch_size)
         dataset_valid = ImageNetSingle(args.imagenet_root, args.imagenet_valid_sel, args.v_batch_size)

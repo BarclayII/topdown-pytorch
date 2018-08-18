@@ -75,6 +75,10 @@ if args.dataset == 'imagenet':
     n_classes = 1000
     cnn = 'resnet18'
     in_dims = None
+elif args.dataset == 'dogs':
+    n_classes = 120
+    cnn = 'resnet50'
+    in_dims = None
 elif args.dataset == 'cifar10':
     n_classes = 10
     from pytorch_cifar.models import ResNet18
@@ -185,12 +189,15 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag, n_branches=2, n_levels=2):
     plt.close('all')
 
 logfile = open('debug.log', 'w')
+dataset_with_sgd_schedule = ['cifar10', 'dogs']
+dataset_with_normalize = ['cifar10', 'imagenet', 'flower', 'dogs']
 
 #@profile
 def train():
     best_epoch = 0
     best_valid_loss = 1e6
     best_acc = 0
+    levels = 0
 
     n_train_batches = len(train_loader)
 
@@ -198,11 +205,11 @@ def train():
     if args.dataset.startswith('mnist'):
         lr = 1e-4
         opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
-    elif args.dataset == 'cifar10':
+    elif args.dataset in dataset_with_sgd_schedule:
         lr = 0.01
-        opt = T.optim.SGD(params, lr=0.01, momentum=0.9, weight_decay=5e-4)
+        opt = T.optim.SGD(params, lr=0.01, momentum=0.9, weight_decay=1e-4)
         #opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
-    elif args.dataset == 'imagenet':
+    elif args.dataset in ['imagenet']:
         lr = 0.1
         opt = T.optim.RMSprop(params, lr=3e-5, weight_decay=1e-4)
     elif args.dataset == 'flower':
@@ -212,7 +219,7 @@ def train():
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
 
-        start_lvl = 0 if args.schedule else n_levels
+        start_lvl = 0
         sum_loss = 0
         train_loss_dict = {
                 'pc': 0.,
@@ -233,19 +240,19 @@ def train():
                 x, y, b = preprocessor(item)
                 print(x.shape, y.shape, file=logfile)
 
-                if args.dataset in ['cifar10', 'imagenet', 'flower']:
+                if args.dataset in dataset_with_normalize:
                     x_in = imagenet_normalize(x)
                 else:
                     x_in = x
 
                 total_loss = 0
 
-                t, (loss_pc, loss_cc) = builder(x_in, min(epoch // 20, 2))
+                t, (loss_pc, loss_cc) = builder(x_in, levels)
                 loss_pc = loss_pc.mean()
                 loss_cc = loss_cc.mean()
                 train_loss_dict['pc'] += loss_pc.item()
                 train_loss_dict['cc'] += loss_cc.item()
-                readout_list = readout(t)
+                readout_list = readout(t, levels)
 
                 if args.hs:
                     total_loss =\
@@ -253,7 +260,7 @@ def train():
                         loss_cc * hs.coef_lambda[3]
                 else:
                     total_loss = loss_pc + loss_cc
-                for lvl in range(start_lvl, n_levels + 1):
+                for lvl in range(start_lvl, levels):
                     y_pred, att_weights = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
 
@@ -289,7 +296,7 @@ def train():
                 nn.utils.clip_grad_norm_(params, 0.1)
                 opt.step()
                 sum_loss += total_loss.item()
-                hit = levelwise_hit[-1]
+                hit = levelwise_hit[levels - 1]
                 cnt += batch_size
 
                 if i == 0:
@@ -337,16 +344,16 @@ def train():
             for i, item in enumerate(tqdm.tqdm(valid_loader)):
                 x, y, b = preprocessor(item)
                 print(x.shape, y.shape, file=logfile)
-                if args.dataset in ['cifar10', 'imagenet', 'flower']:
+                if args.dataset in dataset_with_normalize:
                     x_in = imagenet_normalize(x)
                 else:
                     x_in = x
 
                 total_loss = 0
-                t, _ = builder(x_in, min(epoch // 20, 2))
-                readout_list = readout(t)
+                t, _ = builder(x_in, levels)
+                readout_list = readout(t, levels)
 
-                for lvl in range(start_lvl, n_levels + 1):
+                for lvl in range(start_lvl, levels + 1):
                     y_pred, att_weights = readout_list[lvl]
                     loss = F.cross_entropy(
                         y_pred, y
@@ -355,7 +362,7 @@ def train():
                     levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
 
                 sum_loss += total_loss.item()
-                hit = levelwise_hit[-1]
+                hit = levelwise_hit[levels - 1]
                 cnt += args.v_batch_size
 
                 if i == 0:
@@ -369,7 +376,7 @@ def train():
                     sample_g_arr = [t[_].g[:10] for _ in range(length)]
                     sample_atts = att_weights.cpu().numpy()[:10]
 
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'valid', n_branches=n_branches, n_levels=n_levels)
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'valid', n_branches=n_branches, n_levels=levels)
 
         avg_loss = sum_loss / i
         acc = hit * 1.0 / cnt
@@ -379,7 +386,7 @@ def train():
 
         writer.add_scalar('data/loss', avg_loss, epoch)
         if args.schedule:
-            writer.add_scalars('data/levelwise_loss', {str(lvl): levelwise_acc[lvl] for lvl in range(n_levels + 1)}, epoch)
+            writer.add_scalars('data/levelwise_loss', {str(lvl): levelwise_acc[lvl] for lvl in range(levels + 1)}, epoch)
         writer.add_scalar('data/accuracy', acc, epoch)
 
         if (epoch + 1) % 10 == 0:
@@ -394,15 +401,19 @@ def train():
             T.save(builder.state_dict(), 'checkpoints/{}_builder_best.pt'.format(expr_setting))
             T.save(readout.state_dict(), 'checkpoints/{}_readout_best.pt'.format(expr_setting))
             best_epoch = epoch
-        elif best_epoch < epoch - 5 and lr > 1e-4:
+        elif best_epoch < epoch - 20 and lr > 1e-4 and args.dataset in dataset_with_sgd_schedule:
             best_epoch = epoch
-            print('Shrinking learning rate...')
-            lr /= 10
-            for pg in opt.param_groups:
-                pg['lr'] = lr
+            if levels < 2:
+                print('Increasing level...')
+                levels += 1
+            else:
+                print('Shrinking learning rate...')
+                lr /= 10
+                for pg in opt.param_groups:
+                    pg['lr'] = lr
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
-        elif best_epoch < epoch - 5 and test_loader is not None:
+        elif best_epoch < epoch - 10 and test_loader is not None:
             print('Early Stopping...')
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
@@ -413,16 +424,16 @@ def train():
             with T.no_grad():
                 for i, item in enumerate(tqdm.tqdm(test_loader)):
                     x, y, b = preprocessor(item)
-                    if args.dataset in ['cifar10', 'imagenet', 'flower']:
+                    if args.dataset in dataset_with_normalize:
                         x_in = imagenet_normalize(x)
                     else:
                         x_in = x
 
                     total_loss = 0
-                    t, _ = builder(x_in, min(epoch // 20, 2))
-                    readout_list = readout(t)
+                    t, _ = builder(x_in, levels)
+                    readout_list = readout(t, levels)
 
-                    for lvl in range(start_lvl, n_levels + 1):
+                    for lvl in range(start_lvl, levels + 1):
                         y_pred, att_weights = readout_list[lvl]
                         loss = F.cross_entropy(
                             y_pred, y
@@ -431,7 +442,7 @@ def train():
                         levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
 
                     sum_loss += total_loss.item()
-                    hit = levelwise_hit[-1]
+                    hit = levelwise_hit[levels - 1]
                     cnt += args.v_batch_size
 
             avg_loss = sum_loss / i
@@ -440,7 +451,7 @@ def train():
             print("Loss on test set: {}".format(avg_loss))
             print("Accuracy on test set: {}".format(acc))
 
-            for lvl in range(n_levels + 1):
+            for lvl in range(levels + 1):
                 print("Levelwise accuracy on level {}: {}".format(lvl, levelwise_acc[lvl]))
             break
 
