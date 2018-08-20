@@ -18,6 +18,9 @@ from modules import *
 from constants import *
 import tqdm
 
+T.set_num_threads(4)
+temp_arr = [1, 0.3, 0.01]
+
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--resume', default=None, help='resume training from checkpoint')
 parser.add_argument('--row', default=200, type=int, help='image rows')
@@ -205,7 +208,7 @@ def train():
     params = list(builder.parameters()) + list(readout.parameters()) + (list(hs.parameters()) if args.hs else [])
     if args.dataset.startswith('mnist'):
         lr = 1e-4
-        opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
+        opt = T.optim.RMSprop(params, lr=1e-4)
     elif args.dataset in dataset_with_sgd_schedule:
         lr = 0.01
         opt = T.optim.SGD(params, lr=0.01, momentum=0.9, weight_decay=1e-4)
@@ -220,7 +223,7 @@ def train():
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
 
-        readout_start_lvl = levels
+        readout_start_lvl = 0 #levels
         sum_loss = 0
         train_loss_dict = {
                 'pc': 0.,
@@ -265,7 +268,7 @@ def train():
                     y_pred, att_weights = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
 
-                    loss_ce = F.cross_entropy(y_pred, y)
+                    loss_ce = kl_temperature(y_pred, y, temperature=temp_arr[lvl]) #F.cross_entropy(y_pred, y)
                     train_loss_dict['ce'] += loss_ce.item()
                     if args.hs:
                         loss = loss_ce * hs.coef_lambda[0]
@@ -297,7 +300,7 @@ def train():
                 nn.utils.clip_grad_norm_(params, 0.1)
                 opt.step()
                 sum_loss += total_loss.item()
-                hit = levelwise_hit[levels - 1]
+                hit = levelwise_hit[levels] # - 1]
                 cnt += batch_size
 
                 if i == 0:
@@ -356,14 +359,14 @@ def train():
 
                 for lvl in range(readout_start_lvl, levels + 1):
                     y_pred, att_weights = readout_list[lvl]
-                    loss = F.cross_entropy(
-                        y_pred, y
+                    loss = kl_temperature(
+                        y_pred, y, temperature=temp_arr[lvl]
                     )
                     total_loss += loss
                     levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
 
                 sum_loss += total_loss.item()
-                hit = levelwise_hit[levels - 1]
+                hit = levelwise_hit[levels]# - 1]
                 cnt += args.v_batch_size
 
                 if i == 0:
@@ -436,8 +439,8 @@ def train():
 
                     for lvl in range(readout_start_lvl, levels + 1):
                         y_pred, att_weights = readout_list[lvl]
-                        loss = F.cross_entropy(
-                            y_pred, y
+                        loss = kl_temperature(
+                            y_pred, y, temperature=temp_arr[lvl]
                         )
                         total_loss += loss
                         levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()

@@ -10,6 +10,19 @@ from glimpse import create_glimpse
 from util import cuda, area, intersection
 import itertools
 
+def kl_temperature(y, lbl, temperature=0.01):
+    batch_size = y.shape[0]
+    n_classes = y.shape[1]
+    y_logit = cuda(T.zeros(batch_size, n_classes))
+    y_logit.scatter_(1, lbl.unsqueeze(-1), 1)
+    return F.kl_div(F.log_softmax(y), F.softmax(y_logit / temperature), size_average=False) / batch_size
+
+def F_temperature(glim):
+    """
+    Variable temperature
+    """
+    pass
+
 def num_nodes(lvl, brch):
     return (brch ** (lvl + 1) - 1) // (brch - 1)
 
@@ -226,7 +239,7 @@ class TreeBuilder(nn.Module):
         self.g_dims = g_dims
 
     def noderange(self, level):
-        return range(self.n_branches ** level - 1, self.n_branches ** (level + 1) - 1) \
+        return range(num_nodes(level - 1, self.n_branches), num_nodes(level, self.n_branches)) \
                 if self.n_branches > 1 \
                 else range(level, level + 1)
 
