@@ -5,6 +5,7 @@ from .wrapper import wrap_output
 from .sampler import SubsetSampler
 from .imagenet import ImageNetSingle, ImageNetBatchSampler
 from .flower.dataset import FlowerSingle
+from .bird.dataset import BirdSingle
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
 from util import cuda
@@ -52,7 +53,15 @@ def data_generator_flower(dataset, batch_size, **config):
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=config['shuffle'], drop_last=True, num_workers=0)
     return dataloader
 
+def data_generator_bird(dataset, batch_size, **config):
+    dataloader = DataLoader(dataset, batch_size=batch_size, sampler=config['sampler'], drop_last=True, num_workers=0)
+    return dataloader
+
 def preprocess_flower(item):
+    _x, _y = item
+    return cuda(_x), cuda(_y.squeeze(1)), None
+
+def preprocess_bird(item):
     _x, _y = item
     return cuda(_x), cuda(_y.squeeze(1)), None
 
@@ -86,13 +95,24 @@ def get_generator(args):
         loader_test = None
         preprocessor = preprocess_cifar10
         args.row = args.col = 32
+    elif args.dataset == 'bird':
+        dataset_train = BirdSingle('train')
+        dataset_test = BirdSingle('test')
+        train_sampler = SubsetRandomSampler(range(0, 3000))
+        #valid_sampler = SubsetSampler(range(2700, 3000))
+        test_sampler = SubsetSampler(range(0, 3033))
+        loader_train = data_generator_bird(dataset_train, args.batch_size, sampler=train_sampler)
+        #loader_valid = data_generator_bird(dataset_train, args.batch_size, sampler=valid_sampler)
+        loader_test = data_generator_bird(dataset_test, args.v_batch_size, sampler=test_sampler)
+        loader_valid = loader_test
+        preprocessor = preprocess_bird
     elif args.dataset == 'flower':
         dataset_train = FlowerSingle('train')
         dataset_valid = FlowerSingle('valid')
         dataset_test = FlowerSingle('test')
         loader_train = data_generator_flower(dataset_train, args.batch_size, shuffle=True)
-        loader_valid = data_generator_flower(dataset_valid, args.batch_size, shuffle=False)
-        loader_test = data_generator_flower(dataset_test, args.batch_size, shuffle=False)
+        loader_valid = data_generator_flower(dataset_valid, args.v_batch_size, shuffle=False)
+        loader_test = data_generator_flower(dataset_test, args.v_batch_size, shuffle=False)
         preprocessor = preprocess_flower
     elif args.dataset in ['imagenet', 'dogs']:
         # TODO: test set

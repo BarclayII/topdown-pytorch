@@ -19,7 +19,7 @@ from constants import *
 import tqdm
 
 T.set_num_threads(4)
-temp_arr = [1, 0.3, 0.01]
+temp_arr = [1, 0.2, 0.01]
 
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--resume', default=None, help='resume training from checkpoint')
@@ -36,13 +36,14 @@ parser.add_argument('--att_type', default='mean', type=str, help='attention type
 parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
 parser.add_argument('--cc_coef', default=0, type=float, help='regularization parameter(child-child)')
 parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
+parser.add_argument('--l2_coef', default=1e-3, type=float, help='coefficient for l2 loss')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--levels_from', default=2, type=int, help='levels from')
 parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
-parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, mnistcluttered, cifar10, imagenet, flower)')
+parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, mnistcluttered, cifar10, imagenet, flower, bird)')
 parser.add_argument('--n_digits', default=1, type=int, help='indicate number of digits in multimnist dataset')
 parser.add_argument('--v_batch_size', default=32, type=int, help='valid batch size')
 parser.add_argument('--size_min', default=28 // 3 * 2, type=int, help='Object minimum size')
@@ -107,6 +108,10 @@ elif args.dataset == 'flower':
     n_classes = 102
     cnn = 'resnet18'
     in_dims = None
+elif args.dataset == 'bird':
+    n_classes = 200
+    cnn = 'resnet18'
+    in_dims = None
 
 if args.hs is True:
     """
@@ -114,6 +119,7 @@ if args.hs is True:
     1: Rank Loss
     2: PC Loss
     3: CC Loss
+    4: L2 Loss
     """
     hs = cuda(HomoscedasticModule())
     args.pc_coef = 1
@@ -129,6 +135,7 @@ else:
                             att_type=args.att_type,
                             pc_coef=args.pc_coef,
                             cc_coef=args.cc_coef,
+                            l2_coef=args.l2_coef,
                             n_classes=n_classes,
                             glimpse_type=args.glm_type,
                             glimpse_size=(args.glm_size, args.glm_size),
@@ -194,7 +201,7 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag, n_branches=2, n_levels=2):
 
 logfile = open('debug.log', 'w')
 dataset_with_sgd_schedule = ['cifar10', 'dogs']
-dataset_with_normalize = ['cifar10', 'imagenet', 'flower', 'dogs']
+dataset_with_normalize = ['cifar10', 'imagenet', 'flower', 'dogs', 'bird']
 
 #@profile
 def train():
@@ -216,9 +223,9 @@ def train():
     elif args.dataset in ['imagenet', 'dogs']:
         lr = 0.1
         opt = T.optim.RMSprop(params, lr=3e-5, weight_decay=1e-4)
-    elif args.dataset == 'flower':
+    elif args.dataset == 'flower' or args.dataset == 'bird':
         lr = 1e-4
-        opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
+        opt = T.optim.RMSprop(params, lr=3e-5)
 
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
@@ -226,10 +233,11 @@ def train():
         readout_start_lvl = 0 #levels
         sum_loss = 0
         train_loss_dict = {
-                'pc': 0.,
-                'cc': 0.,
-                'rank': 0,
-                'ce': 0,
+            'pc': 0.,
+            'cc': 0.,
+            'rank': 0,
+            'ce': 0,
+            'l2': 0,
         }
         hit = 0
         cnt = 0
@@ -251,11 +259,12 @@ def train():
 
                 total_loss = 0
 
-                t, (loss_pc, loss_cc) = builder(x_in, levels)
+                t, (loss_pc, loss_cc, loss_l2) = builder(x_in, levels)
                 loss_pc = loss_pc.mean()
                 loss_cc = loss_cc.mean()
                 train_loss_dict['pc'] += loss_pc.item()
                 train_loss_dict['cc'] += loss_cc.item()
+                train_loss_dict['l2'] += loss_l2.item()
                 readout_list = readout(t, levels)
 
                 if args.hs:
@@ -263,7 +272,7 @@ def train():
                         loss_pc * hs.coef_lambda[2] +\
                         loss_cc * hs.coef_lambda[3]
                 else:
-                    total_loss = loss_pc + loss_cc
+                    total_loss = loss_pc + loss_cc + loss_l2
                 for lvl in range(readout_start_lvl, levels + 1):
                     y_pred, att_weights = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
@@ -417,7 +426,7 @@ def train():
                     pg['lr'] = lr
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
-        elif best_epoch < epoch - 10 and test_loader is not None:
+        elif (best_epoch < epoch - 10 or epoch == n_epochs - 1) and test_loader is not None:
             print('Early Stopping...')
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
@@ -446,7 +455,7 @@ def train():
                         levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
 
                     sum_loss += total_loss.item()
-                    hit = levelwise_hit[levels - 1]
+                    hit = levelwise_hit[levels]
                     cnt += args.v_batch_size
 
             avg_loss = sum_loss / i

@@ -27,7 +27,7 @@ if __name__ == '__main__':
     for i in range(1000):
         img, lbl = flower[i]
         if lbl.item() == 10:
-            plt.imshow(img[:, :])
+            plt.imshow(img.permute(1, 2, 0))
             plt.show()
     """
     sampler = FlowerBatchSampler(flower)

@@ -195,6 +195,7 @@ class TreeBuilder(nn.Module):
                  glimpse_type='gaussian',
                  pc_coef=0,
                  cc_coef=0,
+                 l2_coef=0,
                  what__cnn=None,
                  what__fix=False,
                  what__in_dims=None,
@@ -229,6 +230,7 @@ class TreeBuilder(nn.Module):
 
         self.pc_coef = pc_coef
         self.cc_coef = cc_coef
+        self.l2_coef = l2_coef
         self.net_phi = net_phi
         self.net_b = net_b
         self.net_b_to_h = net_b_to_h
@@ -260,6 +262,7 @@ class TreeBuilder(nn.Module):
         return bbox, g, att, new_b, h
 
     def forward(self, x, lvl=None):
+        batch_size, channels, row, col = x.shape
         if lvl is None:
             lvl = self.n_levels
 
@@ -269,6 +272,7 @@ class TreeBuilder(nn.Module):
 
         loss_pc = 0
         loss_cc = 0
+        loss_l2 = 0
         pc_par = []
         pc_chd = []
         cc_chd_a = []
@@ -281,6 +285,19 @@ class TreeBuilder(nn.Module):
             # propagate
             for k, i in enumerate(current_level):
                 t[i].bbox = bbox[:, k]
+                if l == lvl:
+                    k_x, k_y = self.glimpse.glim_size
+                    d_x = (t[i].bbox[:, 2] * row) / k_x
+                    d_y = (t[i].bbox[:, 3] * col) / k_y
+                    s_x = (t[i].bbox[:, 4] * row * 2) / k_x
+                    s_y = (t[i].bbox[:, 5] * col * 2) / k_y
+                    loss_l2 += (1. / len(current_level)) * (
+                        F.mse_loss(d_x, cuda(T.ones_like(d_x))) +
+                        F.mse_loss(d_y, cuda(T.ones_like(d_y))) +
+                        F.mse_loss(s_x, cuda(T.ones_like(s_x))) +
+                        F.mse_loss(s_y, cuda(T.ones_like(s_y)))
+                        )
+
                 t[i].g = g[:, k]
                 t[i].h = h[:, k]
                 t[i].att = att[:, k]
@@ -299,7 +316,7 @@ class TreeBuilder(nn.Module):
         loss_pc = F_reg_pc(T.stack(pc_par, 1), T.stack(pc_chd, 1)) if lvl >= 1 else x.new(1).zero_()
         loss_cc = F_reg_cc(T.stack(cc_chd_a, 1), T.stack(cc_chd_b, 1)) if lvl >= 1 else x.new(1).zero_()
 
-        return t, (loss_pc * self.pc_coef, loss_cc * self.cc_coef)
+        return t, (loss_pc * self.pc_coef, loss_cc * self.cc_coef, loss_l2 * self.l2_coef)
 
 class HomoscedasticModule(nn.Module):
     def __init__(self):
