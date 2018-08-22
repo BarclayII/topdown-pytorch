@@ -15,7 +15,6 @@ from viz import fig_to_ndarray_tb
 from tensorboardX import SummaryWriter
 from stats import *
 from modules import *
-from constants import *
 import tqdm
 
 T.set_num_threads(4)
