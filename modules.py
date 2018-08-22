@@ -287,10 +287,10 @@ class TreeBuilder(nn.Module):
                 t[i].bbox = bbox[:, k]
                 if l == lvl:
                     k_x, k_y = self.glimpse.glim_size
-                    d_x = (t[i].bbox[:, 2] * row) / k_x
-                    d_y = (t[i].bbox[:, 3] * col) / k_y
-                    s_x = (t[i].bbox[:, 4] * row * 2) / k_x
-                    s_y = (t[i].bbox[:, 5] * col * 2) / k_y
+                    d_x = (t[i].bbox[:, 2] * col / k_x
+                    d_y = (t[i].bbox[:, 3] * row) / k_y
+                    s_x = (t[i].bbox[:, 4] * col * 2) / k_x
+                    s_y = (t[i].bbox[:, 5] * row * 2) / k_y
                     loss_l2 += (1. / len(current_level)) * (
                         F.mse_loss(d_x, cuda(T.ones_like(d_x))) +
                         F.mse_loss(d_y, cuda(T.ones_like(d_y))) +
