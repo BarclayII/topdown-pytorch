@@ -287,7 +287,7 @@ class TreeBuilder(nn.Module):
                 t[i].bbox = bbox[:, k]
                 if l == lvl:
                     k_x, k_y = self.glimpse.glim_size
-                    d_x = (t[i].bbox[:, 2] * col / k_x
+                    d_x = (t[i].bbox[:, 2] * col) / k_x
                     d_y = (t[i].bbox[:, 3] * row) / k_y
                     s_x = (t[i].bbox[:, 4] * col * 2) / k_x
                     s_y = (t[i].bbox[:, 5] * row * 2) / k_y
