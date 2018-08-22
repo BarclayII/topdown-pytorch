@@ -10,12 +10,16 @@ from glimpse import create_glimpse
 from util import cuda, area, intersection
 import itertools
 
+def F_cauchy(ratio):
+    return T.log(1 + T.abs(ratio - 1))
+
 def kl_temperature(y, lbl, temperature=0.01):
     batch_size = y.shape[0]
     n_classes = y.shape[1]
     y_logit = cuda(T.zeros(batch_size, n_classes))
     y_logit.scatter_(1, lbl.unsqueeze(-1), 1)
     return F.kl_div(F.log_softmax(y), F.softmax(y_logit / temperature), size_average=False) / batch_size
+#    return F.cross_entropy(y, lbl)
 
 def F_temperature(glim):
     """
@@ -49,13 +53,14 @@ def F_reg_cc(chd_a, chd_b):
     """
     Regularization term(among childs)
     """
+    margin = 0.25
     area_a = area(chd_a)
     area_b = area(chd_b)
     intersection_area = intersection(chd_a, chd_b)
     #union_area = (areas[i] + areas[j] - intersection_area)
     #chds_penalty += (intersection_area + 1e-6) / (union_area + 1e-6)
-    chds_penalty = (intersection_area + 1e-6) / (area_a + 1e-6) + \
-                   (intersection_area + 1e-6) / (area_b + 1e-6)
+    chds_penalty = F.relu((intersection_area + 1e-6) / (area_a + 1e-6) - margin) + \
+                   F.relu((intersection_area + 1e-6) / (area_b + 1e-6) - margin)
 
     return chds_penalty
 
@@ -292,11 +297,11 @@ class TreeBuilder(nn.Module):
                     s_x = (t[i].bbox[:, 4] * col * 2) / k_x
                     s_y = (t[i].bbox[:, 5] * row * 2) / k_y
                     loss_l2 += (1. / len(current_level)) * (
-                        F.mse_loss(d_x, cuda(T.ones_like(d_x))) +
-                        F.mse_loss(d_y, cuda(T.ones_like(d_y))) +
-                        F.mse_loss(s_x, cuda(T.ones_like(s_x))) +
-                        F.mse_loss(s_y, cuda(T.ones_like(s_y)))
-                        )
+                        F_cauchy(d_x) +
+                        F_cauchy(d_y) +
+                        F_cauchy(s_x) +
+                        F_cauchy(s_y)
+                        ) / 4.
 
                 t[i].g = g[:, k]
                 t[i].h = h[:, k]

@@ -36,7 +36,7 @@ parser.add_argument('--att_type', default='mean', type=str, help='attention type
 parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
 parser.add_argument('--cc_coef', default=0, type=float, help='regularization parameter(child-child)')
 parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
-parser.add_argument('--l2_coef', default=1e-3, type=float, help='coefficient for l2 loss')
+parser.add_argument('--l2_coef', default=1, type=float, help='coefficient for l2 loss')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--levels_from', default=2, type=int, help='levels from')
@@ -225,7 +225,7 @@ def train():
         opt = T.optim.RMSprop(params, lr=3e-5, weight_decay=1e-4)
     elif args.dataset == 'flower' or args.dataset == 'bird':
         lr = 1e-4
-        opt = T.optim.RMSprop(params, lr=3e-5)
+        opt = T.optim.RMSprop(params, lr=1e-4)
 
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
@@ -262,6 +262,7 @@ def train():
                 t, (loss_pc, loss_cc, loss_l2) = builder(x_in, levels)
                 loss_pc = loss_pc.mean()
                 loss_cc = loss_cc.mean()
+                loss_l2 = loss_l2.mean()
                 train_loss_dict['pc'] += loss_pc.item()
                 train_loss_dict['cc'] += loss_cc.item()
                 train_loss_dict['l2'] += loss_l2.item()
