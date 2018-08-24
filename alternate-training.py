@@ -162,15 +162,23 @@ def imagenet_normalize(x):
     x = (x - mean[None, :, None, None]) / std[None, :, None, None]
     return x
 
+
 available_clrs = ['y', 'r', 'g', 'b']
+
+def getclrs(n_branches, n_levels):
+    clrs = []
+    for j in range(n_levels):
+        clrs += [available_clrs[j]] * (n_branches ** (j + 1))
+
+    return clrs
+
+
 def viz(epoch, imgs, bboxes, g_arr, att, tag, n_branches=2, n_levels=2):
     length = len(g_arr)
     statplot = StatPlot(5, 2)
     statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
 
-    clrs = []
-    for j in range(n_levels):
-        clrs += [available_clrs[j]] * (n_branches ** (j + 1))
+    clrs = getclrs(n_branches, n_levels)
     for j in range(10):
         statplot.add_image(
             imgs[j].permute(1, 2, 0),
@@ -347,7 +355,6 @@ def train():
             }
             writer.add_scalars('data/coef_lambda', lambda_dict, epoch)
 
-        cnt = 0
         hit = 0
         levelwise_hit = np.zeros(n_levels + 1)
         sum_loss = 0
@@ -390,6 +397,40 @@ def train():
                     sample_atts = att_weights.cpu().numpy()[:10]
 
                     viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'valid', n_branches=n_branches, n_levels=levels)
+
+                    # nearest neighbor construction
+                    nnset = NearestNeighborImageSet(
+                            sample_imgs.permute(0, 2, 3, 1),
+                            T.cat(readout.module.hs, 1)[:10],
+                            bboxs=sample_bboxs,
+                            clrs=getclrs(n_branches, levels),
+                            )
+
+                    print()
+                    for j, item_train in tqdm.tqdm(enumerate(train_loader)):
+                        x, y, b = preprocessor(item_train)
+                        print(x.shape, y.shape, file=logfile)
+                        if args.dataset in dataset_with_normalize:
+                            x_in = imagenet_normalize(x)
+                        else:
+                            x_in = x
+
+                        t, _ = builder(x_in, levels)
+                        readout_list = readout(t, levels)
+                        bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
+                        sample_bboxs = [
+                                glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
+                                for k in range(1, length)
+                                ]
+                        nnset.push(
+                                x.permute(0, 2, 3, 1),
+                                T.cat(readout.module.hs, 1),
+                                bboxs=sample_bboxs,
+                                clrs=getclrs(n_branches, levels),
+                                )
+
+                    nnset.display()
+                    writer.add_image('Image/val/nn', fig_to_ndarray_tb(nnset.stat_plot.fig), epoch)
 
         avg_loss = sum_loss / i
         acc = hit * 1.0 / cnt

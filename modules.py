@@ -336,11 +336,15 @@ class ReadoutModule(nn.Module):
             lvls = self.n_levels
         #nodes = t[-self.n_branches ** self.n_levels:]
         results = []
+        hs = []
         for lvl in range(lvls + 1):
             nodes = t[:num_nodes(lvl, self.n_branches)]
             att = F.softmax(T.stack([node.att for node in nodes], 1), dim=1)
             h = T.stack([node.h for node in nodes], 1)
             results.append((self.predictor((h * att).sum(dim=1)), att.squeeze(-1)))
+            hs.append((h * att).sum(dim=1))
+
+        self.hs = hs
         return results
 
 class MultiscaleGlimpse(nn.Module):

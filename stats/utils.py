@@ -28,7 +28,7 @@ def to_numpy(func):
                     if isinstance(elem, list):
                         new_element.append(np.array(elem))
                     elif T.is_tensor(elem):
-                        new_element.append(elem.cpu().numpy())
+                        new_element.append(elem.detach().cpu().numpy())
                     else:
                         new_element.append(elem)
             elif T.is_tensor(element):
