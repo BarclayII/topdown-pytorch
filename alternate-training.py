@@ -15,11 +15,10 @@ from viz import fig_to_ndarray_tb
 from tensorboardX import SummaryWriter
 from stats import *
 from modules import *
-from constants import *
 import tqdm
 
 T.set_num_threads(4)
-temp_arr = [1, 0.2, 0.01]
+temp_arr = [1, 0.01, 0.01]
 
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--resume', default=None, help='resume training from checkpoint')
@@ -36,7 +35,7 @@ parser.add_argument('--att_type', default='mean', type=str, help='attention type
 parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
 parser.add_argument('--cc_coef', default=0, type=float, help='regularization parameter(child-child)')
 parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
-parser.add_argument('--l2_coef', default=1e-3, type=float, help='coefficient for l2 loss')
+parser.add_argument('--l2_coef', default=1, type=float, help='coefficient for l2 loss')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--levels_from', default=2, type=int, help='levels from')
@@ -156,6 +155,12 @@ def rank_loss(a, b, margin=0):
     #return (b - a + margin).clamp(min=0).mean()
     return F.sigmoid(b - a).mean()
 
+def imagenet_normalize_inverse(x):
+    mean = T.FloatTensor([0.485, 0.456, 0.406]).to(x)
+    std = T.FloatTensor([0.229, 0.224, 0.225]).to(x)
+    x = x * std[None, :, None, None] + mean[None, :, None, None]
+    return x
+
 def imagenet_normalize(x):
     mean = T.FloatTensor([0.485, 0.456, 0.406]).to(x)
     std = T.FloatTensor([0.229, 0.224, 0.225]).to(x)
@@ -209,7 +214,7 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag, n_branches=2, n_levels=2):
 
 logfile = open('debug.log', 'w')
 dataset_with_sgd_schedule = ['cifar10', 'dogs']
-dataset_with_normalize = ['cifar10', 'imagenet', 'flower', 'dogs', 'bird']
+dataset_with_normalize = ['cifar10', 'imagenet', 'flower', 'bird', 'dogs']
 
 #@profile
 def train():
@@ -233,7 +238,7 @@ def train():
         opt = T.optim.RMSprop(params, lr=3e-5, weight_decay=1e-4)
     elif args.dataset == 'flower' or args.dataset == 'bird':
         lr = 1e-4
-        opt = T.optim.RMSprop(params, lr=3e-5)
+        opt = T.optim.RMSprop(params, lr=1e-4)
 
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
@@ -270,6 +275,7 @@ def train():
                 t, (loss_pc, loss_cc, loss_l2) = builder(x_in, levels)
                 loss_pc = loss_pc.mean()
                 loss_cc = loss_cc.mean()
+                loss_l2 = loss_l2.mean()
                 train_loss_dict['pc'] += loss_pc.item()
                 train_loss_dict['cc'] += loss_cc.item()
                 train_loss_dict['l2'] += loss_l2.item()
@@ -328,7 +334,10 @@ def train():
                             glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
                             for k in range(1, length)
                             ]
-                    sample_g_arr = [t[_].g[:10].detach() for _ in range(length)]
+                    normalize_inverse = lambda x: \
+                        imagenet_normalize_inverse(x) if args.dataset in dataset_with_normalize else x
+                    sample_g_arr = [
+                        normalize_inverse(t[_].g[:10].detach()) for _ in range(length)]
                     sample_atts = att_weights.detach().cpu().numpy()[:10]
 
                     viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'train', n_branches=n_branches, n_levels=n_levels)
@@ -393,7 +402,10 @@ def train():
                             glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
                             for k in range(1, length)
                             ]
-                    sample_g_arr = [t[_].g[:10] for _ in range(length)]
+                    normalize_inverse = lambda x: \
+                        imagenet_normalize_inverse(x) if args.dataset in dataset_with_normalize else x
+                    sample_g_arr = [
+                        normalize_inverse(t[_].g[:10]) for _ in range(length)]
                     sample_atts = att_weights.cpu().numpy()[:10]
 
                     viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'valid', n_branches=n_branches, n_levels=levels)

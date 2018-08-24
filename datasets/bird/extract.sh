@@ -1,3 +1,2 @@
-tar -xvzf images.tgz
-tar -xvzf lists.tgz
+tar -xvzf CUB_200_2011.tgz 
 rm *.tgz
