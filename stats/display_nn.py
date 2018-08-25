@@ -13,6 +13,7 @@ class NearestNeighborImageSet(object):
         self.hbase = hbase.reshape(hbase.shape[0], -1)
         self.bboxs = bboxs
         self.clrs = clrs
+        self.idx = 0
 
         self.stat_plot = StatPlot(self.n, k + 1)
 
@@ -25,9 +26,10 @@ class NearestNeighborImageSet(object):
         for i in range(self.n):
             for j in range(h.shape[0]):
                 bbox_i = [b[i] for b in bboxs] if bboxs is not None else None
-                bisect.insort(self.q[i], (dist[i, j], j, x[i], h[i], bbox_i, clrs))
+                bisect.insort(self.q[i], (dist[i, j], self.idx, x[i], h[i], bbox_i, clrs))
                 if len(self.q[i]) > self.k:
                     self.q[i].pop()
+                self.idx += 1       # tie breaker
 
     def display(self):
         for i in range(self.n):
