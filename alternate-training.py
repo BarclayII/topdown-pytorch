@@ -354,6 +354,8 @@ def train():
         for key in train_loss_dict.keys():
             train_loss_dict[key] /= n_train_batches
         writer.add_scalars('data/train_loss_dict', train_loss_dict, epoch)
+        levelwise_acc = levelwise_hit * 1.0 / cnt
+        writer.add_scalars('data/train_levelwise_loss', {str(lvl): levelwise_acc[lvl] for lvl in range(levels + 1)}, epoch)
         if args.hs:
             coef_lambda = hs.coef_lambda.cpu().tolist()
             lambda_dict = {
