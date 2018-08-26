@@ -25,8 +25,8 @@ class NearestNeighborImageSet(object):
 
         for i in range(self.n):
             for j in range(h.shape[0]):
-                bbox_i = [b[i] for b in bboxs] if bboxs is not None else None
-                bisect.insort(self.q[i], (dist[i, j], self.idx, x[i], h[i], bbox_i, clrs))
+                bbox_j = [b[j] for b in bboxs] if bboxs is not None else None
+                bisect.insort(self.q[i], (dist[i, j], self.idx, x[j], h[j], bbox_j, clrs))
                 if len(self.q[i]) > self.k:
                     self.q[i].pop()
                 self.idx += 1       # tie breaker

@@ -231,7 +231,7 @@ def train():
         opt = T.optim.RMSprop(params, lr=1e-4)
     elif args.dataset in dataset_with_sgd_schedule:
         lr = 0.01
-        opt = T.optim.SGD(params, lr=0.01, momentum=0.9, weight_decay=1e-4)
+        opt = T.optim.SGD(params, lr=0.01, momentum=0.9, weight_decay=5e-5)
         #opt = T.optim.RMSprop(params, lr=1e-4, weight_decay=5e-4)
     elif args.dataset in ['imagenet', 'dogs']:
         lr = 0.1
@@ -431,7 +431,7 @@ def train():
                         readout_list = readout(t, levels)
                         bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
                         sample_bboxs = [
-                                glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
+                                glimpse_to_xyhw(t[k].bbox[:, :4].detach()) * bbox_scaler
                                 for k in range(1, length)
                                 ]
                         nnset.push(
