@@ -19,13 +19,6 @@ def kl_temperature(y, lbl, temperature=0.01):
     y_logit = cuda(T.zeros(batch_size, n_classes))
     y_logit.scatter_(1, lbl.unsqueeze(-1), 1)
     return F.kl_div(F.log_softmax(y), F.softmax(y_logit / temperature), size_average=False) / batch_size
-#    return F.cross_entropy(y, lbl)
-
-def F_temperature(glim):
-    """
-    Variable temperature
-    """
-    pass
 
 def num_nodes(lvl, brch):
     return (brch ** (lvl + 1) - 1) // (brch - 1)
@@ -39,6 +32,17 @@ def F_ent(dist, eps=1e-8):
     (*)
     """
     return -(dist * T.log(dist + eps)).sum(dim=-1)
+
+def F_reg_res(bbox, row, col, k_x, k_y):
+    d_x = (bbox[:, 2] * col) / k_x
+    d_y = (bbox[:, 3] * row) / k_y
+    s_x = (bbox[:, 4] * col * 2) / k_x
+    s_y = (bbox[:, 5] * row * 2) / k_y
+    return (F_cauchy(d_x) +
+        F_cauchy(d_y) +
+        F_cauchy(s_x) +
+        F_cauchy(s_y)
+        ) / 4.
 
 def F_reg_pc(par, chd):
     """
@@ -112,7 +116,7 @@ class WhatModule(nn.Module):
                     cnn.layer3,
                     cnn.layer4,
                     nn.AdaptiveAvgPool2d(1),
-                    )
+            )
         else:
             self.cnn = cnn
         self.net_h = nn.Sequential(
@@ -200,7 +204,7 @@ class TreeBuilder(nn.Module):
                  glimpse_type='gaussian',
                  pc_coef=0,
                  cc_coef=0,
-                 l2_coef=0,
+                 res_coef=0,
                  what__cnn=None,
                  what__fix=False,
                  what__in_dims=None,
@@ -235,7 +239,7 @@ class TreeBuilder(nn.Module):
 
         self.pc_coef = pc_coef
         self.cc_coef = cc_coef
-        self.l2_coef = l2_coef
+        self.res_coef = res_coef
         self.net_phi = net_phi
         self.net_b = net_b
         self.net_b_to_h = net_b_to_h
@@ -251,6 +255,7 @@ class TreeBuilder(nn.Module):
                 else range(level, level + 1)
 
     def forward_layer(self, x, l, b):
+        #print(next(self.net_phi[0].cnn.parameters()) - next(self.net_phi[1].cnn.parameters()))
         batch_size, _, _, _ = x.shape
         bbox, _ = self.glimpse.rescale(b, False)
         g = self.glimpse(x, bbox)
@@ -260,9 +265,9 @@ class TreeBuilder(nn.Module):
         h_b = self.net_b_to_h[l](b.view(batch_size * n_glimpses, self.g_dims))
         h = T.cat([phi, h_b], dim=-1)
         att = self.net_att(h).view(batch_size, n_glimpses, -1)
-        delta_b = (self.net_b[l](h)
+        delta_b = (self.net_b[l](h.detach())
                     .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
-        new_b = b[:, :, None] + delta_b
+        new_b = b[:, :, None].detach() + delta_b
         h = h.view(batch_size, n_glimpses, *h.shape[1:])
         return bbox, g, att, new_b, h
 
@@ -277,7 +282,7 @@ class TreeBuilder(nn.Module):
 
         loss_pc = 0
         loss_cc = 0
-        loss_l2 = 0
+        loss_res = 0
         pc_par = []
         pc_chd = []
         cc_chd_a = []
@@ -292,16 +297,8 @@ class TreeBuilder(nn.Module):
                 t[i].bbox = bbox[:, k]
                 if l == lvl:
                     k_x, k_y = self.glimpse.glim_size
-                    d_x = (t[i].bbox[:, 2] * col) / k_x
-                    d_y = (t[i].bbox[:, 3] * row) / k_y
-                    s_x = (t[i].bbox[:, 4] * col * 2) / k_x
-                    s_y = (t[i].bbox[:, 5] * row * 2) / k_y
-                    loss_l2 += (1. / len(current_level)) * (
-                        F_cauchy(d_x) +
-                        F_cauchy(d_y) +
-                        F_cauchy(s_x) +
-                        F_cauchy(s_y)
-                        ) / 4.
+                    loss_res += (1. / len(current_level)) *\
+                        F_reg_res(t[i].bbox, row, col, k_x, k_y)
 
                 t[i].g = g[:, k]
                 t[i].h = h[:, k]
@@ -321,7 +318,7 @@ class TreeBuilder(nn.Module):
         loss_pc = F_reg_pc(T.stack(pc_par, 1), T.stack(pc_chd, 1)) if lvl >= 1 else x.new(1).zero_()
         loss_cc = F_reg_cc(T.stack(cc_chd_a, 1), T.stack(cc_chd_b, 1)) if lvl >= 1 else x.new(1).zero_()
 
-        return t, (loss_pc * self.pc_coef, loss_cc * self.cc_coef, loss_l2 * self.l2_coef)
+        return t, (loss_pc * self.pc_coef, loss_cc * self.cc_coef, loss_res * self.res_coef)
 
 class HomoscedasticModule(nn.Module):
     def __init__(self):
@@ -339,13 +336,18 @@ class ReadoutModule(nn.Module):
     def forward(self, t, lvls=None):
         if lvls is None:
             lvls = self.n_levels
-        #nodes = t[-self.n_branches ** self.n_levels:]
         results = []
         hs = []
+        def detached(h, idx, lvl):
+            if idx >= num_nodes(lvl - 1, self.n_branches):
+                return h
+            else:
+                return h.detach()
+
         for lvl in range(lvls + 1):
             nodes = t[:num_nodes(lvl, self.n_branches)]
             att = F.softmax(T.stack([node.att for node in nodes], 1), dim=1)
-            h = T.stack([node.h for node in nodes], 1)
+            h = T.stack([detached(node.h, idx, lvl) for idx, node in enumerate(nodes)], 1)
             results.append((self.predictor((h * att).sum(dim=1)), att.squeeze(-1)))
             hs.append((h * att).sum(dim=1))
 

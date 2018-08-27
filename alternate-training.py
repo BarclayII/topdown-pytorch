@@ -18,7 +18,7 @@ from modules import *
 import tqdm
 
 T.set_num_threads(4)
-temp_arr = [1, 0.01, 0.01]
+temp_arr = [0.01, 0.01, 0.01]
 
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--resume', default=None, help='resume training from checkpoint')
@@ -35,7 +35,7 @@ parser.add_argument('--att_type', default='mean', type=str, help='attention type
 parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
 parser.add_argument('--cc_coef', default=0, type=float, help='regularization parameter(child-child)')
 parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
-parser.add_argument('--l2_coef', default=1, type=float, help='coefficient for l2 loss')
+parser.add_argument('--res_coef', default=1, type=float, help='coefficient for resolution loss')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--levels_from', default=2, type=int, help='levels from')
@@ -109,17 +109,11 @@ elif args.dataset == 'flower':
     in_dims = None
 elif args.dataset == 'bird':
     n_classes = 200
-    cnn = 'resnet18'
+    #cnn = 'resnet18'
+    cnn = None
     in_dims = None
 
 if args.hs is True:
-    """
-    0: Cross-Entropy Loss
-    1: Rank Loss
-    2: PC Loss
-    3: CC Loss
-    4: L2 Loss
-    """
     hs = cuda(HomoscedasticModule())
     args.pc_coef = 1
     args.cc_coef = 0
@@ -134,7 +128,7 @@ else:
                             att_type=args.att_type,
                             pc_coef=args.pc_coef,
                             cc_coef=args.cc_coef,
-                            l2_coef=args.l2_coef,
+                            res_coef=args.res_coef,
                             n_classes=n_classes,
                             glimpse_type=args.glm_type,
                             glimpse_size=(args.glm_size, args.glm_size),
@@ -238,7 +232,8 @@ def train():
         opt = T.optim.RMSprop(params, lr=3e-5, weight_decay=1e-4)
     elif args.dataset == 'flower' or args.dataset == 'bird':
         lr = 1e-4
-        opt = T.optim.RMSprop(params, lr=1e-4)
+        opt = T.optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=5e-5)
+        #opt = T.optim.RMSprop(params, lr=1e-4)
 
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
@@ -250,7 +245,7 @@ def train():
             'cc': 0.,
             'rank': 0,
             'ce': 0,
-            'l2': 0,
+            'res': 0,
         }
         hit = 0
         cnt = 0
@@ -272,13 +267,13 @@ def train():
 
                 total_loss = 0
 
-                t, (loss_pc, loss_cc, loss_l2) = builder(x_in, levels)
+                t, (loss_pc, loss_cc, loss_res) = builder(x_in, levels)
                 loss_pc = loss_pc.mean()
                 loss_cc = loss_cc.mean()
-                loss_l2 = loss_l2.mean()
+                loss_res = loss_res.mean()
                 train_loss_dict['pc'] += loss_pc.item()
                 train_loss_dict['cc'] += loss_cc.item()
-                train_loss_dict['l2'] += loss_l2.item()
+                train_loss_dict['res'] += loss_res.item()
                 readout_list = readout(t, levels)
 
                 if args.hs:
@@ -286,11 +281,10 @@ def train():
                         loss_pc * hs.coef_lambda[2] +\
                         loss_cc * hs.coef_lambda[3]
                 else:
-                    total_loss = loss_pc + loss_cc + loss_l2
+                    total_loss = loss_pc + loss_cc + loss_res
                 for lvl in range(readout_start_lvl, levels + 1):
                     y_pred, att_weights = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
-
                     loss_ce = kl_temperature(y_pred, y, temperature=temp_arr[lvl]) #F.cross_entropy(y_pred, y)
                     train_loss_dict['ce'] += loss_ce.item()
                     if args.hs:
@@ -367,6 +361,7 @@ def train():
             writer.add_scalars('data/coef_lambda', lambda_dict, epoch)
 
         hit = 0
+        cnt = 0
         levelwise_hit = np.zeros(n_levels + 1)
         sum_loss = 0
         builder.eval()
