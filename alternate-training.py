@@ -416,6 +416,8 @@ def train():
                             T.cat(readout.module.hs, 1)[:10],
                             bboxs=sample_bboxs,
                             clrs=getclrs(n_branches, levels),
+                            title=[str(_y_pred) + '/' + str(_y)
+                                   for _y_pred, _y in zip(y_pred.max(-1)[1], y)],
                             )
 
                     print()
@@ -439,6 +441,7 @@ def train():
                                 T.cat(readout.module.hs, 1),
                                 bboxs=sample_bboxs,
                                 clrs=getclrs(n_branches, levels),
+                                title=[str(_y) for _y in y],
                                 )
 
                     nnset.display()

@@ -3,7 +3,7 @@ import bisect
 
 class NearestNeighborImageSet(object):
     @to_numpy
-    def __init__(self, xbase, hbase, k=5, bboxs=None, clrs=None):
+    def __init__(self, xbase, hbase, k=5, bboxs=None, clrs=None, title=None):
         self.k = k
         self.n = xbase.shape[0]
         self.i = 0
@@ -13,12 +13,13 @@ class NearestNeighborImageSet(object):
         self.hbase = hbase.reshape(hbase.shape[0], -1)
         self.bboxs = bboxs
         self.clrs = clrs
+        self.title = title
         self.idx = 0
 
         self.stat_plot = StatPlot(self.n, k + 1)
 
     @to_numpy
-    def push(self, x, h, bboxs=None, clrs=None):
+    def push(self, x, h, bboxs=None, clrs=None, title=None):
         h = h.reshape(h.shape[0], -1)
         # dist[i, j] is the euclidean distance between h[j] and hbase[i]
         dist = ((h[None, :, :] - self.hbase[:, None, :]) ** 2).sum(2) ** 0.5
@@ -26,7 +27,7 @@ class NearestNeighborImageSet(object):
         for i in range(self.n):
             for j in range(h.shape[0]):
                 bbox_j = [b[j] for b in bboxs] if bboxs is not None else None
-                bisect.insort(self.q[i], (dist[i, j], self.idx, x[j], h[j], bbox_j, clrs))
+                bisect.insort(self.q[i], (dist[i, j], self.idx, x[j], h[j], bbox_j, clrs, title[j]))
                 if len(self.q[i]) > self.k:
                     self.q[i].pop()
                 self.idx += 1       # tie breaker
@@ -34,7 +35,7 @@ class NearestNeighborImageSet(object):
     def display(self):
         for i in range(self.n):
             bbox_i = [b[i] for b in self.bboxs] if self.bboxs is not None else None
-            self.stat_plot.add_image(self.xbase[i], title='input image', bboxs=bbox_i, clrs=self.clrs)
+            self.stat_plot.add_image(self.xbase[i], bboxs=bbox_i, clrs=self.clrs, title=self.title[i])
             for item in sorted(self.q[i], key=lambda x: x[0]):
-                d, j, x, h, b, c = item
-                self.stat_plot.add_image(x, title='%.3f' % d, bboxs=b, clrs=c)
+                d, j, x, h, b, c, t = item
+                self.stat_plot.add_image(x, title='%s %.3f' % (t, d), bboxs=b, clrs=c)
