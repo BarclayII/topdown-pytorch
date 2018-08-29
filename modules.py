@@ -65,7 +65,6 @@ def F_reg_cc(chd_a, chd_b):
     #chds_penalty += (intersection_area + 1e-6) / (union_area + 1e-6)
     chds_penalty = F.relu((intersection_area + 1e-6) / (area_a + 1e-6) - margin) + \
                    F.relu((intersection_area + 1e-6) / (area_b + 1e-6) - margin)
-
     return chds_penalty
 
 def build_cnn(**config):
@@ -223,19 +222,18 @@ class TreeBuilder(nn.Module):
                 )
         net_b = nn.ModuleList(
                 nn.Sequential(
-                    nn.LeakyReLU(),
-                    nn.Linear(h_dims * 2, g_dims * n_branches),
-                    )
-                for _ in range(n_levels + 1)
-                )
-        net_b_to_h = nn.ModuleList(
-                nn.Sequential(
-                    nn.Linear(g_dims, h_dims),
+                    nn.Linear(h_dims + g_dims, h_dims + g_dims),
                     nn.ReLU(),
-                    nn.Linear(h_dims, h_dims),
+                    nn.Linear(h_dims + g_dims, g_dims * n_branches),
                     )
                 for _ in range(n_levels + 1)
                 )
+        net_b_to_h =\
+            nn.Sequential(
+                nn.Linear(g_dims, g_dims),
+                nn.ReLU(),
+                nn.Linear(g_dims, g_dims),
+            )
 
         self.pc_coef = pc_coef
         self.cc_coef = cc_coef
@@ -243,7 +241,7 @@ class TreeBuilder(nn.Module):
         self.net_phi = net_phi
         self.net_b = net_b
         self.net_b_to_h = net_b_to_h
-        self.net_att = SelfAttentionModule(h_dims * 2, a_dims, att_type)
+        self.net_att = SelfAttentionModule(h_dims + g_dims, a_dims, att_type)
         self.glimpse = glimpse
         self.n_branches = n_branches
         self.n_levels = n_levels
@@ -262,12 +260,12 @@ class TreeBuilder(nn.Module):
         n_glimpses = g.shape[1]
         g_flat = g.view(batch_size * n_glimpses, *g.shape[2:])
         phi = self.net_phi[l](g_flat, readout=False)
-        h_b = self.net_b_to_h[l](b.view(batch_size * n_glimpses, self.g_dims))
+        h_b = self.net_b_to_h(b.view(batch_size * n_glimpses, self.g_dims))
         h = T.cat([phi, h_b], dim=-1)
         att = self.net_att(h).view(batch_size, n_glimpses, -1)
         delta_b = (self.net_b[l](h.detach())
                     .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
-        new_b = b[:, :, None].detach() + delta_b
+        new_b = delta_b #b[:, :, None] + delta_b
         h = h.view(batch_size, n_glimpses, *h.shape[1:])
         return bbox, g, att, new_b, h
 
@@ -321,15 +319,16 @@ class TreeBuilder(nn.Module):
         return t, (loss_pc * self.pc_coef, loss_cc * self.cc_coef, loss_res * self.res_coef)
 
 class HomoscedasticModule(nn.Module):
-    def __init__(self):
+    def __init__(self, n_levels):
         super(HomoscedasticModule, self).__init__()
-        self.coef_lambda = nn.Parameter(T.ones(4), requires_grad=True)
+        self.coef_lambda = nn.Parameter(T.ones(n_levels), requires_grad=True)
 
 class ReadoutModule(nn.Module):
-    def __init__(self, h_dims=128, n_classes=10, n_branches=1, n_levels=1):
+    def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
         super(ReadoutModule, self).__init__()
 
-        self.predictor = nn.Linear(h_dims * 2, n_classes)
+        self.predictor =\
+            nn.Linear(h_dims + g_dims, n_classes)
         self.n_branches = n_branches
         self.n_levels = n_levels
 
@@ -338,16 +337,10 @@ class ReadoutModule(nn.Module):
             lvls = self.n_levels
         results = []
         hs = []
-        def detached(h, idx, lvl):
-            if idx >= num_nodes(lvl - 1, self.n_branches):
-                return h
-            else:
-                return h.detach()
-
         for lvl in range(lvls + 1):
             nodes = t[:num_nodes(lvl, self.n_branches)]
             att = F.softmax(T.stack([node.att for node in nodes], 1), dim=1)
-            h = T.stack([detached(node.h, idx, lvl) for idx, node in enumerate(nodes)], 1)
+            h = T.stack([node.h for node in nodes], 1)
             results.append((self.predictor((h * att).sum(dim=1)), att.squeeze(-1)))
             hs.append((h * att).sum(dim=1))
 

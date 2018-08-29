@@ -18,7 +18,7 @@ from modules import *
 import tqdm
 
 T.set_num_threads(4)
-temp_arr = [0.01, 0.01, 0.01]
+temp_arr = [0.5, 0.3, 0.01]
 
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--resume', default=None, help='resume training from checkpoint')
@@ -109,15 +109,11 @@ elif args.dataset == 'flower':
     in_dims = None
 elif args.dataset == 'bird':
     n_classes = 200
-    #cnn = 'resnet18'
-    cnn = None
+    cnn = 'resnet18'
     in_dims = None
 
 if args.hs is True:
-    hs = cuda(HomoscedasticModule())
-    args.pc_coef = 1
-    args.cc_coef = 0
-    args.rank_coef = 1
+    hs = cuda(HomoscedasticModule(n_levels + 1))
 
 if args.resume is not None:
     builder = T.load('checkpoints/{}_builder_{}.pt'.format(expr_setting, args.resume))
@@ -232,8 +228,8 @@ def train():
         opt = T.optim.RMSprop(params, lr=3e-5, weight_decay=1e-4)
     elif args.dataset == 'flower' or args.dataset == 'bird':
         lr = 1e-4
-        opt = T.optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=5e-5)
-        #opt = T.optim.RMSprop(params, lr=1e-4)
+        #opt = T.optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=5e-5)
+        opt = T.optim.RMSprop(params, lr=1e-4)
 
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
@@ -276,28 +272,20 @@ def train():
                 train_loss_dict['res'] += loss_res.item()
                 readout_list = readout(t, levels)
 
-                if args.hs:
-                    total_loss =\
-                        loss_pc * hs.coef_lambda[2] +\
-                        loss_cc * hs.coef_lambda[3]
-                else:
-                    total_loss = loss_pc + loss_cc + loss_res
+                total_loss = loss_pc + loss_cc + loss_res
                 for lvl in range(readout_start_lvl, levels + 1):
                     y_pred, att_weights = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
-                    loss_ce = kl_temperature(y_pred, y, temperature=temp_arr[lvl]) #F.cross_entropy(y_pred, y)
-                    train_loss_dict['ce'] += loss_ce.item()
                     if args.hs:
-                        loss = loss_ce * hs.coef_lambda[0]
+                        loss_ce = F.cross_entropy(y_pred, y) * hs.coef_lambda[lvl]
                     else:
-                        loss = loss_ce
+                        loss_ce = kl_temperature(y_pred, y, temp_arr[lvl]) # F.cross_entropy(y_pred, y).clamp(min=2)
+                    train_loss_dict['ce'] += loss_ce.item()
+                    loss = loss_ce
 
                     if args.rank and lvl > readout_start_lvl:
                         loss_rank = rank_loss(y_score, y_score_last)
-                        if args.hs:
-                            loss = loss + loss_rank * hs.coef_lambda[1]
-                        else:
-                            loss = loss + args.rank_coef * loss_rank
+                        loss = loss + args.rank_coef * loss_rank
                         train_loss_dict['rank'] += args.rank_coef * loss_rank.item()
 
                     y_score_last = y_score
@@ -307,7 +295,7 @@ def train():
                         """
                         Homoscedastic Loss
                         """
-                        total_loss = total_loss - (T.log(hs.coef_lambda)).sum()
+                        total_loss = total_loss + (T.log(hs.coef_lambda)).sum()
 
                     current_hit = (y_pred.max(dim=-1)[1] == y).sum().item()
                     levelwise_hit[lvl] += current_hit
@@ -353,10 +341,7 @@ def train():
         if args.hs:
             coef_lambda = hs.coef_lambda.cpu().tolist()
             lambda_dict = {
-                'ce': coef_lambda[0],
-                'rank': coef_lambda[1],
-                'pc': coef_lambda[2],
-                'cc': coef_lambda[3]
+                str(k): v for k, v in enumerate(coef_lambda)
             }
             writer.add_scalars('data/coef_lambda', lambda_dict, epoch)
 

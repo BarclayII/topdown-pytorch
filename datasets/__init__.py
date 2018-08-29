@@ -96,12 +96,17 @@ def get_generator(args):
         preprocessor = preprocess_cifar10
         args.row = args.col = 32
     elif args.dataset == 'bird':
+        transform_train = Compose([
+            RandomCrop(32, padding=4),
+            RandomHorizontalFlip(),
+            ToTensor(),
+        ])
         dataset_train = BirdSingle('train')
         dataset_test = BirdSingle('test')
         train_sampler = SubsetRandomSampler(range(0, 3000))
         #valid_sampler = SubsetSampler(range(2700, 3000))
         test_sampler = SubsetSampler(range(0, 3033))
-        loader_train = data_generator_bird(dataset_train, args.batch_size, sampler=train_sampler)
+        loader_train = data_generator_bird(dataset_train, args.batch_size, sampler=train_sampler, transform=transform_train)
         #loader_valid = data_generator_bird(dataset_train, args.batch_size, sampler=valid_sampler)
         loader_test = data_generator_bird(dataset_test, args.v_batch_size, sampler=test_sampler)
         loader_valid = loader_test
