@@ -18,7 +18,8 @@ from modules import *
 import tqdm
 
 T.set_num_threads(4)
-temp_arr = [0.5, 0.3, 0.01]
+#temp_arr = [0.5, 0.3, 0.01]
+temp_arr = [0.01, 0.01, 0.01]
 
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--resume', default=None, help='resume training from checkpoint')
