@@ -1,5 +1,5 @@
 import torchvision
-from torchvision.transforms import ToTensor, RandomCrop, RandomHorizontalFlip, Normalize, Compose, ToPILImage
+from torchvision.transforms import ToTensor, RandomCrop, RandomHorizontalFlip, Normalize, Compose, ToPILImage, Resize
 from .mnist import MNISTMulti
 from .wrapper import wrap_output
 from .sampler import SubsetSampler
@@ -99,6 +99,7 @@ def get_generator(args):
         transform_train = Compose([
             ToPILImage(),
             RandomCrop(448),
+            Resize(512),
             RandomHorizontalFlip(),
             ToTensor(),
         ])
