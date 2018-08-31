@@ -265,17 +265,21 @@ class TreeBuilder(nn.Module):
                            in_dims=what__in_dims)
                 for _ in range(n_levels + 1)
                 )
+        """
         net_where = nn.ModuleList(
                 WhereModule(what_filters, kernel_size, final_pool_size, h_dims,
                            n_classes, cnn=what__cnn, fix=what__fix,
                            in_dims=what__in_dims)
                 for _ in range(n_levels + 1)
         )
+        """
         net_b = nn.ModuleList(
                 nn.Sequential(
-                    #nn.Linear(h_dims + g_dims, h_dims + g_dims),
-                    #nn.ReLU(),
-                    nn.Linear(h_dims + g_dims, g_dims * n_branches),
+                    nn.Linear(h_dims + g_dims, h_dims),
+                    nn.ReLU(),
+                    nn.Linear(h_dims, h_dims),
+                    nn.ReLU(),
+                    nn.Linear(h_dims, g_dims * n_branches),
                     )
                 for _ in range(n_levels + 1)
                 )
@@ -290,7 +294,7 @@ class TreeBuilder(nn.Module):
         self.cc_coef = cc_coef
         self.res_coef = res_coef
         self.net_phi = net_phi
-        self.net_where = net_where
+        #self.net_where = net_where
         self.net_b = net_b
         self.net_b_to_h = net_b_to_h
         self.net_att = SelfAttentionModule(h_dims + g_dims, a_dims, att_type)
@@ -314,9 +318,9 @@ class TreeBuilder(nn.Module):
         phi = self.net_phi[l](g_flat, readout=False)
         h_b = self.net_b_to_h(b.view(batch_size * n_glimpses, self.g_dims))
         h = T.cat([phi, h_b], dim=-1)
-        h_where = T.cat([self.net_where[l](g_flat), h_b], dim=-1)
+        #h_where = T.cat([self.net_where[l](g_flat), h_b], dim=-1)
         att = self.net_att(h).view(batch_size, n_glimpses, -1)
-        delta_b = (self.net_b[l](h_where)
+        delta_b = (self.net_b[l](h)
                     .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
         new_b = delta_b #b[:, :, None] + delta_b
         h = h.view(batch_size, n_glimpses, *h.shape[1:])

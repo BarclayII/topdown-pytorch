@@ -34,8 +34,8 @@ with open('CUB_200_2011/train_test_split.txt', 'r') as f:
         else:
             dataset_files['test'].append((filename_list[i], lbl_list[i]))
 
-row = 200
-col = 200
+row = 512 
+col = 512
 
 img_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'CUB_200_2011/images')
 
