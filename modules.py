@@ -64,8 +64,6 @@ def F_reg_cc(chd_a, chd_b):
     area_a = area(chd_a)
     area_b = area(chd_b)
     intersection_area = intersection(chd_a, chd_b)
-    #union_area = (areas[i] + areas[j] - intersection_area)
-    #chds_penalty += (intersection_area + 1e-6) / (union_area + 1e-6)
     chds_penalty = F.relu((intersection_area + 1e-6) / (area_a + 1e-6) - margin) + \
                    F.relu((intersection_area + 1e-6) / (area_b + 1e-6) - margin)
     return chds_penalty
@@ -90,10 +88,9 @@ def build_cnn(**config):
         cnn_list.append(nn.BatchNorm2d(filters[i]))
         if i < len(filters) - 1:
             cnn_list.append(nn.LeakyReLU())
-    cnn_list.append(nn.AdaptiveMaxPool2d(final_pool_size))
+    #cnn_list.append(nn.AdaptiveMaxPool2d(final_pool_size))
 
     return nn.Sequential(*cnn_list)
-
 
 class WhatModule(nn.Module):
     def __init__(self, filters, kernel_size, final_pool_size, h_dims, n_classes, cnn=None, in_dims=None, fix=False):
@@ -104,10 +101,12 @@ class WhatModule(nn.Module):
                 kernel_size=kernel_size,
                 final_pool_size=final_pool_size
             )
-            in_dims = filters[-1] * np.prod(final_pool_size)
+            in_dims_1 = filters[-1] * np.prod(final_pool_size)
+            in_dims_0 = filters[-1]
         elif isinstance(cnn, str) and cnn.startswith('resnet'):
             cnn = getattr(torchvision.models, cnn)(pretrained=True)
-            in_dims = cnn.fc.in_features * np.prod(final_pool_size)
+            in_dims_1 = cnn.fc.in_features * np.prod(final_pool_size)
+            in_dims_0 = cnn.fc.in_features
             self.cnn = nn.Sequential(
                     cnn.conv1,
                     cnn.bn1,
@@ -117,63 +116,21 @@ class WhatModule(nn.Module):
                     cnn.layer2,
                     cnn.layer3,
                     cnn.layer4,
-                    nn.AdaptiveAvgPool2d(final_pool_size),
             )
         else:
             self.cnn = cnn
-        self.net_h = nn.Sequential(
-            nn.Linear(in_dims, h_dims),
+            assert "Not implemented yet"
+
+        self.avgpool_0 = nn.AdaptiveAvgPool2d(1)
+        self.avgpool_1 = nn.AdaptiveAvgPool2d(final_pool_size)
+        self.net_h_0 = nn.Sequential(
+            nn.Linear(in_dims_0, h_dims),
             nn.ReLU(),
-            nn.Linear(h_dims, h_dims),
+            nn.Linear(h_dims, h_dims)
         )
-        self.net_p = nn.Sequential( # net_p is preserved
+        self.net_h_1 = nn.Sequential(
+            nn.Linear(in_dims_1, h_dims),
             nn.ReLU(),
-            nn.Linear(h_dims, n_classes),
-        )
-        self.dropout = nn.Dropout(0.5)
-
-        self.fix = fix
-
-    def forward(self, glimpse_kxk, readout=True):
-        batch_size = glimpse_kxk.shape[0]
-        if self.fix:
-            with T.no_grad():
-                h = self.cnn(glimpse_kxk).view(batch_size, -1)
-        else:
-            h = self.cnn(glimpse_kxk).view(batch_size, -1)
-        h = self.net_h(self.dropout(h))
-        return h if not readout else self.net_p(h)
-
-class WhereModule(nn.Module):
-    def __init__(self, filters, kernel_size, final_pool_size, h_dims, n_classes, cnn=None, in_dims=None, fix=False):
-        super(WhereModule, self).__init__()
-        if cnn is None:
-            self.cnn = build_cnn(
-                filters=filters,
-                kernel_size=kernel_size,
-                final_pool_size=final_pool_size
-            )
-            in_dims = filters[-1] * np.prod(final_pool_size)
-        elif isinstance(cnn, str) and cnn.startswith('resnet'):
-            cnn = getattr(torchvision.models, cnn)(pretrained=True)
-            in_dims = cnn.fc.in_features
-            self.cnn = nn.Sequential(
-                    cnn.conv1,
-                    cnn.bn1,
-                    cnn.relu,
-                    cnn.maxpool,
-                    cnn.layer1,
-                    cnn.layer2,
-                    cnn.layer3,
-                    cnn.layer4,
-                    nn.AdaptiveAvgPool2d(1),
-            )
-        else:
-            self.cnn = cnn
-        self.net_h = nn.Sequential(
-            nn.Linear(in_dims, h_dims),
-            nn.ReLU(),
-            nn.Linear(h_dims, h_dims),
         )
 
         self.fix = fix
@@ -182,11 +139,15 @@ class WhereModule(nn.Module):
         batch_size = glimpse_kxk.shape[0]
         if self.fix:
             with T.no_grad():
-                h = self.cnn(glimpse_kxk).view(batch_size, -1)
+                fm = self.cnn(glimpse_kxk)
         else:
-            h = self.cnn(glimpse_kxk).view(batch_size, -1)
-        h = self.net_h(h)
-        return h
+            fm = self.cnn(glimpse_kxk)
+
+        h_0 = self.avgpool_0(fm).view(batch_size, -1)
+        h_1 = self.avgpool_1(fm).view(batch_size, -1).detach()
+        h_0 = self.net_h_0(h_0)
+        h_1 = self.net_h_1(h_1)
+        return h_0, h_1
 
 class TreeItem(dict):
     def __init__(self, *args, **kwargs):
@@ -271,8 +232,6 @@ class TreeBuilder(nn.Module):
                 nn.Sequential(
                     nn.Linear(h_dims + g_dims, h_dims),
                     nn.ReLU(),
-                    nn.Linear(h_dims, h_dims),
-                    nn.ReLU(),
                     nn.Linear(h_dims, g_dims * n_branches),
                     )
                 for _ in range(n_levels + 1)
@@ -307,9 +266,9 @@ class TreeBuilder(nn.Module):
         g = self.glimpse(x, bbox)
         n_glimpses = g.shape[1]
         g_flat = g.view(batch_size * n_glimpses, *g.shape[2:])
-        phi = self.net_phi[l](g_flat, readout=False)
+        phi, phi_where = self.net_phi[l](g_flat)
         h_b = self.net_b_to_h(b.view(batch_size * n_glimpses, self.g_dims).detach())
-        h = T.cat([phi.detach(), h_b], dim=-1)
+        h = T.cat([phi_where, h_b], dim=-1)
         att = self.net_att(h).view(batch_size, n_glimpses, -1)
         delta_b = (self.net_b[l](h)
                     .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
