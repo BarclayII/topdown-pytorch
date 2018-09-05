@@ -121,17 +121,17 @@ class WhatModule(nn.Module):
             self.cnn = cnn
             assert "Not implemented yet"
 
-        self.avgpool_0 = nn.AdaptiveAvgPool2d(1)
-        self.avgpool_1 = nn.AdaptiveAvgPool2d(final_pool_size)
-        self.net_h_0 = nn.Sequential(
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        self.mlp_what = nn.Sequential(
             nn.Linear(in_dims_0, h_dims),
             nn.ReLU(),
-            nn.Linear(h_dims, h_dims)
         )
-        self.net_h_1 = nn.Sequential(
+        self.mlp_where = nn.Sequential(
             nn.Linear(in_dims_1, h_dims),
             nn.ReLU(),
         )
+        INIT.xavier_uniform_(self.mlp_where[0].weight)
+        INIT.constant_(self.mlp_where[0].bias, 0)
 
         self.fix = fix
 
@@ -143,11 +143,11 @@ class WhatModule(nn.Module):
         else:
             fm = self.cnn(glimpse_kxk)
 
-        h_0 = self.avgpool_0(fm).view(batch_size, -1)
-        h_1 = self.avgpool_1(fm).view(batch_size, -1).detach()
-        h_0 = self.net_h_0(h_0)
-        h_1 = self.net_h_1(h_1)
-        return h_0, h_1
+        cnn_what = self.avgpool(fm).view(batch_size, -1)
+        cnn_where = self.avgpool(fm).view(batch_size, -1).detach()
+        phi_what = self.mlp_what(cnn_what)
+        phi_where = self.mlp_where(cnn_where)
+        return phi_what, phi_where
 
 class TreeItem(dict):
     def __init__(self, *args, **kwargs):
@@ -201,8 +201,8 @@ class TreeBuilder(nn.Module):
                  what_filters=[16, 32, 64, 128, 256],
                  where_filters=[16, 32],
                  kernel_size=(3, 3),
-                 final_pool_size=(3, 3),
-                 h_dims=128,
+                 final_pool_size=(1, 1), #(4, 4),
+                 h_dims=512,
                  a_dims=50,
                  n_classes=10,
                  n_branches=1,
@@ -236,19 +236,21 @@ class TreeBuilder(nn.Module):
                     )
                 for _ in range(n_levels + 1)
                 )
+        """
         net_b_to_h =\
             nn.Sequential(
                 nn.Linear(g_dims, g_dims),
                 nn.ReLU(),
                 nn.Linear(g_dims, g_dims),
             )
+        """
 
         self.pc_coef = pc_coef
         self.cc_coef = cc_coef
         self.res_coef = res_coef
         self.net_phi = net_phi
         self.net_b = net_b
-        self.net_b_to_h = net_b_to_h
+        #self.net_b_to_h = net_b_to_h
         self.net_att = SelfAttentionModule(h_dims + g_dims, a_dims, att_type)
         self.glimpse = glimpse
         self.n_branches = n_branches
@@ -263,18 +265,21 @@ class TreeBuilder(nn.Module):
     def forward_layer(self, x, l, b):
         batch_size, _, _, _ = x.shape
         bbox, _ = self.glimpse.rescale(b, False)
-        g = self.glimpse(x, bbox)
-        n_glimpses = g.shape[1]
-        g_flat = g.view(batch_size * n_glimpses, *g.shape[2:])
-        phi, phi_where = self.net_phi[l](g_flat)
-        h_b = self.net_b_to_h(b.view(batch_size * n_glimpses, self.g_dims).detach())
-        h = T.cat([phi_where, h_b], dim=-1)
-        att = self.net_att(h).view(batch_size, n_glimpses, -1)
-        delta_b = (self.net_b[l](h)
+        x_g = self.glimpse(x, bbox)
+        n_glimpses = x_g.shape[1]
+        x_g_flat = x_g.view(batch_size * n_glimpses, *x_g.shape[2:])
+        phi_what, phi_where = self.net_phi[l](x_g_flat)
+        #e_g = self.net_b_to_h(
+        #    b.view(batch_size * n_glimpses, self.g_dims).detach()
+        #)
+        e_g = b.view(batch_size * n_glimpses, self.g_dims).detach()
+        h_where = T.cat([phi_where, e_g], dim=-1)
+        att = self.net_att(h_where).view(batch_size, n_glimpses, -1)
+        new_b = (self.net_b[l](h_where)
                     .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
-        new_b = delta_b
-        h = T.cat([phi, h_b], dim=-1).view(batch_size, n_glimpses, *h.shape[1:])
-        return bbox, g, att, new_b, h
+
+        h_what = T.cat([phi_what, e_g], dim=-1).view(batch_size, n_glimpses, *h_where.shape[1:])
+        return bbox, x_g, att, new_b, h_what
 
     def forward(self, x, lvl=None):
         batch_size, channels, row, col = x.shape
@@ -331,9 +336,8 @@ class HomoscedasticModule(nn.Module):
         self.coef_lambda = nn.Parameter(T.ones(n_levels), requires_grad=True)
 
 class ReadoutModule(nn.Module):
-    def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
+    def __init__(self, h_dims=512, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
         super(ReadoutModule, self).__init__()
-
         self.predictor = nn.ModuleList(
             nn.Linear(h_dims + g_dims, n_classes)
             for _ in range(n_levels + 1)
@@ -347,9 +351,15 @@ class ReadoutModule(nn.Module):
         results = []
         hs = []
         for lvl in range(lvls + 1):
+            def to_detach(h, idx):
+                if idx >= num_nodes(lvl - 1, self.n_branches):
+                    return h
+                else:
+                    return h.detach()
+
             nodes = t[:num_nodes(lvl, self.n_branches)]
             att = F.softmax(T.stack([node.att for node in nodes], 1), dim=1)
-            h = T.stack([node.h for node in nodes], 1)
+            h = T.stack([to_detach(node.h, idx) for idx, node in enumerate(nodes)], 1)
             results.append((self.predictor[lvl]((h * att).sum(dim=1)), att.squeeze(-1)))
             hs.append((h * att).sum(dim=1))
 
