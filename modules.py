@@ -101,11 +101,11 @@ class WhatModule(nn.Module):
                 kernel_size=kernel_size,
                 final_pool_size=final_pool_size
             )
-            in_dims_1 = filters[-1] * np.prod(final_pool_size)
+            in_dims_1 = 128 * np.prod(final_pool_size)
             in_dims_0 = filters[-1]
         elif isinstance(cnn, str) and cnn.startswith('resnet'):
             cnn = getattr(torchvision.models, cnn)(pretrained=True)
-            in_dims_1 = cnn.fc.in_features * np.prod(final_pool_size)
+            in_dims_1 = 128 * np.prod(final_pool_size)
             in_dims_0 = cnn.fc.in_features
             self.cnn = nn.Sequential(
                     cnn.conv1,
@@ -116,12 +116,14 @@ class WhatModule(nn.Module):
                     cnn.layer2,
                     cnn.layer3,
                     cnn.layer4,
+                    nn.AdaptiveAvgPool2d(final_pool_size)
             )
         else:
             self.cnn = cnn
             assert "Not implemented yet"
 
         self.avgpool = nn.AdaptiveAvgPool2d(1)
+        self.conv1x1 = nn.Conv2d(in_dims_0, h_dims, kernel_size=(1, 1))
         self.mlp_what = nn.Sequential(
             nn.Linear(in_dims_0, h_dims),
             nn.ReLU(),
@@ -144,7 +146,7 @@ class WhatModule(nn.Module):
         else:
             fm = self.cnn(glimpse_kxk)
         cnn_what = self.avgpool(fm).view(batch_size, -1)
-        cnn_where = fm.view(batch_size, -1).detach()
+        cnn_where = self.conv1x1(fm.detach()).view(batch_size, -1)
         phi_what = self.mlp_what(cnn_what)
         phi_where = self.mlp_where(cnn_where)
         return phi_what, phi_where
@@ -201,7 +203,7 @@ class TreeBuilder(nn.Module):
                  what_filters=[16, 32, 64, 128, 256],
                  where_filters=[16, 32],
                  kernel_size=(3, 3),
-                 final_pool_size=(5, 5), #(4, 4),
+                 final_pool_size=(4, 4), #(4, 4),
                  h_dims=128,
                  a_dims=50,
                  n_classes=10,
