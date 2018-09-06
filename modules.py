@@ -152,7 +152,7 @@ class WhatModule(nn.Module):
 class TreeItem(dict):
     def __init__(self, *args, **kwargs):
         dict.__init__(self, *args, **kwargs)
-        self._attrs = ['b', 'bbox', 'h', 'y', 'g', 'par_h']
+        self._attrs = ['b', 'bbox', 'h', 'y', 'g']
 
     def __getattr__(self, name):
         if not name.startswith('_') and name in self._attrs:
@@ -237,17 +237,11 @@ class TreeBuilder(nn.Module):
                 for _ in range(n_levels + 1)
                 )
 
-        net_phi_to_h = nn.Sequential(
-            nn.Linear(h_dims + h_dims + g_dims, h_dims),
-            nn.Tanh()
-        )
-
         self.pc_coef = pc_coef
         self.cc_coef = cc_coef
         self.res_coef = res_coef
         self.net_phi = net_phi
         self.net_b = net_b
-        self.net_phi_to_h = net_phi_to_h
         self.glimpse = glimpse
         self.n_branches = n_branches
         self.n_levels = n_levels
@@ -259,7 +253,7 @@ class TreeBuilder(nn.Module):
                 if self.n_branches > 1 \
                 else range(level, level + 1)
 
-    def forward_layer(self, x, l, b, par_h):
+    def forward_layer(self, x, l, b):
         batch_size = x.shape[0]
         bbox, _ = self.glimpse.rescale(b, False)
         x_g = self.glimpse(x, bbox)
@@ -270,7 +264,7 @@ class TreeBuilder(nn.Module):
         h_where = T.cat([phi_where, e_g], dim=-1)
         new_b = (self.net_b[l](h_where)
                     .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
-        h_what = self.net_phi_to_h(T.cat([phi_what, e_g, par_h], dim=-1))
+        h_what = phi_what
         h_what = h_what.view(batch_size, n_glimpses, *h_what.shape[1:])
         return bbox, x_g, new_b, h_what
 
@@ -282,7 +276,6 @@ class TreeBuilder(nn.Module):
         t = [TreeItem() for _ in range(num_nodes(lvl, self.n_branches))]
         # root init
         t[0].b = x.new(batch_size, self.g_dims).zero_()
-        t[0].par_h = x.new(batch_size, self.h_dims).zero_()
 
         loss_pc = 0
         loss_cc = 0
@@ -295,8 +288,7 @@ class TreeBuilder(nn.Module):
         for l in range(0, lvl + 1):
             current_level = self.noderange(l)
             b = T.stack([t[i].b for i in current_level], 1)
-            par_h = T.cat([t[i].par_h for i in current_level], 0)
-            bbox, g, new_b, h = self.forward_layer(x, l, b, par_h)
+            bbox, g, new_b, h = self.forward_layer(x, l, b)
             # propagate
             for k, i in enumerate(current_level):
                 t[i].bbox = bbox[:, k]
@@ -311,7 +303,6 @@ class TreeBuilder(nn.Module):
                 if l != lvl:
                     for j in range(self.n_branches):
                         t[i * self.n_branches + j + 1].b = new_b[:, k, j]
-                        t[i * self.n_branches + j + 1].par_h = t[i].h
                 if l != 0:
                     pc_par.append(t[(i - 1) // self.n_branches].bbox)
                     pc_chd.append(t[i].bbox)
@@ -333,6 +324,7 @@ class HomoscedasticModule(nn.Module):
 class ReadoutModule(nn.Module):
     def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
         super(ReadoutModule, self).__init__()
+        self.rnn = nn.RNNCell(h_dims + g_dims, h_dims)
         self.predictor = nn.ModuleList(
             nn.Linear(h_dims, n_classes)
             for _ in range(n_levels + 1)
