@@ -88,7 +88,7 @@ def build_cnn(**config):
         cnn_list.append(nn.BatchNorm2d(filters[i]))
         if i < len(filters) - 1:
             cnn_list.append(nn.LeakyReLU())
-    #cnn_list.append(nn.AdaptiveMaxPool2d(final_pool_size))
+    cnn_list.append(nn.AdaptiveMaxPool2d(final_pool_size))
 
     return nn.Sequential(*cnn_list)
 
@@ -128,6 +128,7 @@ class WhatModule(nn.Module):
         )
         self.mlp_where = nn.Sequential(
             nn.Linear(in_dims_1, h_dims),
+
             nn.ReLU(),
         )
         INIT.xavier_uniform_(self.mlp_where[0].weight)
@@ -142,9 +143,8 @@ class WhatModule(nn.Module):
                 fm = self.cnn(glimpse_kxk)
         else:
             fm = self.cnn(glimpse_kxk)
-
         cnn_what = self.avgpool(fm).view(batch_size, -1)
-        cnn_where = self.avgpool(fm).view(batch_size, -1).detach()
+        cnn_where = fm.view(batch_size, -1).detach()
         phi_what = self.mlp_what(cnn_what)
         phi_where = self.mlp_where(cnn_where)
         return phi_what, phi_where
@@ -152,7 +152,7 @@ class WhatModule(nn.Module):
 class TreeItem(dict):
     def __init__(self, *args, **kwargs):
         dict.__init__(self, *args, **kwargs)
-        self._attrs = ['b', 'bbox', 'h', 'y', 'att', 'g']
+        self._attrs = ['b', 'bbox', 'h', 'y', 'g', 'par_h']
 
     def __getattr__(self, name):
         if not name.startswith('_') and name in self._attrs:
@@ -201,8 +201,8 @@ class TreeBuilder(nn.Module):
                  what_filters=[16, 32, 64, 128, 256],
                  where_filters=[16, 32],
                  kernel_size=(3, 3),
-                 final_pool_size=(1, 1), #(4, 4),
-                 h_dims=512,
+                 final_pool_size=(5, 5), #(4, 4),
+                 h_dims=128,
                  a_dims=50,
                  n_classes=10,
                  n_branches=1,
@@ -236,50 +236,43 @@ class TreeBuilder(nn.Module):
                     )
                 for _ in range(n_levels + 1)
                 )
-        """
-        net_b_to_h =\
-            nn.Sequential(
-                nn.Linear(g_dims, g_dims),
-                nn.ReLU(),
-                nn.Linear(g_dims, g_dims),
-            )
-        """
+
+        net_phi_to_h = nn.Sequential(
+            nn.Linear(h_dims + h_dims + g_dims, h_dims),
+            nn.Tanh()
+        )
 
         self.pc_coef = pc_coef
         self.cc_coef = cc_coef
         self.res_coef = res_coef
         self.net_phi = net_phi
         self.net_b = net_b
-        #self.net_b_to_h = net_b_to_h
-        self.net_att = SelfAttentionModule(h_dims + g_dims, a_dims, att_type)
+        self.net_phi_to_h = net_phi_to_h
         self.glimpse = glimpse
         self.n_branches = n_branches
         self.n_levels = n_levels
         self.g_dims = g_dims
+        self.h_dims = h_dims
 
     def noderange(self, level):
         return range(num_nodes(level - 1, self.n_branches), num_nodes(level, self.n_branches)) \
                 if self.n_branches > 1 \
                 else range(level, level + 1)
 
-    def forward_layer(self, x, l, b):
-        batch_size, _, _, _ = x.shape
+    def forward_layer(self, x, l, b, par_h):
+        batch_size = x.shape[0]
         bbox, _ = self.glimpse.rescale(b, False)
         x_g = self.glimpse(x, bbox)
         n_glimpses = x_g.shape[1]
         x_g_flat = x_g.view(batch_size * n_glimpses, *x_g.shape[2:])
         phi_what, phi_where = self.net_phi[l](x_g_flat)
-        #e_g = self.net_b_to_h(
-        #    b.view(batch_size * n_glimpses, self.g_dims).detach()
-        #)
         e_g = b.view(batch_size * n_glimpses, self.g_dims).detach()
         h_where = T.cat([phi_where, e_g], dim=-1)
-        att = self.net_att(h_where).view(batch_size, n_glimpses, -1)
         new_b = (self.net_b[l](h_where)
                     .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
-
-        h_what = T.cat([phi_what, e_g], dim=-1).view(batch_size, n_glimpses, *h_where.shape[1:])
-        return bbox, x_g, att, new_b, h_what
+        h_what = self.net_phi_to_h(T.cat([phi_what, e_g, par_h], dim=-1))
+        h_what = h_what.view(batch_size, n_glimpses, *h_what.shape[1:])
+        return bbox, x_g, new_b, h_what
 
     def forward(self, x, lvl=None):
         batch_size, channels, row, col = x.shape
@@ -288,7 +281,8 @@ class TreeBuilder(nn.Module):
 
         t = [TreeItem() for _ in range(num_nodes(lvl, self.n_branches))]
         # root init
-        t[0].b = x.new(x.shape[0], self.g_dims).zero_()
+        t[0].b = x.new(batch_size, self.g_dims).zero_()
+        t[0].par_h = x.new(batch_size, self.h_dims).zero_()
 
         loss_pc = 0
         loss_cc = 0
@@ -301,7 +295,8 @@ class TreeBuilder(nn.Module):
         for l in range(0, lvl + 1):
             current_level = self.noderange(l)
             b = T.stack([t[i].b for i in current_level], 1)
-            bbox, g, att, new_b, h = self.forward_layer(x, l, b)
+            par_h = T.cat([t[i].par_h for i in current_level], 0)
+            bbox, g, new_b, h = self.forward_layer(x, l, b, par_h)
             # propagate
             for k, i in enumerate(current_level):
                 t[i].bbox = bbox[:, k]
@@ -312,11 +307,11 @@ class TreeBuilder(nn.Module):
 
                 t[i].g = g[:, k]
                 t[i].h = h[:, k]
-                t[i].att = att[:, k]
 
                 if l != lvl:
                     for j in range(self.n_branches):
                         t[i * self.n_branches + j + 1].b = new_b[:, k, j]
+                        t[i * self.n_branches + j + 1].par_h = t[i].h
                 if l != 0:
                     pc_par.append(t[(i - 1) // self.n_branches].bbox)
                     pc_chd.append(t[i].bbox)
@@ -336,10 +331,10 @@ class HomoscedasticModule(nn.Module):
         self.coef_lambda = nn.Parameter(T.ones(n_levels), requires_grad=True)
 
 class ReadoutModule(nn.Module):
-    def __init__(self, h_dims=512, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
+    def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
         super(ReadoutModule, self).__init__()
         self.predictor = nn.ModuleList(
-            nn.Linear(h_dims + g_dims, n_classes)
+            nn.Linear(h_dims, n_classes)
             for _ in range(n_levels + 1)
         )
         self.n_branches = n_branches
@@ -358,10 +353,9 @@ class ReadoutModule(nn.Module):
                     return h.detach()
 
             nodes = t[:num_nodes(lvl, self.n_branches)]
-            att = F.softmax(T.stack([node.att for node in nodes], 1), dim=1)
             h = T.stack([to_detach(node.h, idx) for idx, node in enumerate(nodes)], 1)
-            results.append((self.predictor[lvl]((h * att).sum(dim=1)), att.squeeze(-1)))
-            hs.append((h * att).sum(dim=1))
+            results.append(self.predictor[lvl](h.mean(dim=1)))
+            hs.append(h.mean(dim=1))
 
         self.hs = hs
         return results

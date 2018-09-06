@@ -169,7 +169,7 @@ def getclrs(n_branches, n_levels):
     return clrs
 
 
-def viz(epoch, imgs, bboxes, g_arr, att, tag, n_branches=2, n_levels=2):
+def viz(epoch, imgs, bboxes, g_arr, tag, n_branches=2, n_levels=2):
     length = len(g_arr)
     statplot = StatPlot(5, 2)
     statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
@@ -180,10 +180,11 @@ def viz(epoch, imgs, bboxes, g_arr, att, tag, n_branches=2, n_levels=2):
             imgs[j].permute(1, 2, 0),
             bboxs=[bbox[j] for bbox in bboxes],
             clrs=clrs, #['y', 'y', 'r', 'r', 'r', 'r'],
-            lws=att[j, 1:] * length
+            lws=[5] * length #att[j, 1:] * length
         )
         for k in range(length):
-            statplot_g_arr[k].add_image(g_arr[k][j].permute(1, 2, 0), title='att_weight={}'.format(att[j, k]))
+            # TODO titled with accuracy
+            statplot_g_arr[k].add_image(g_arr[k][j].permute(1, 2, 0))
 
     statplot_disp_g = StatPlot(5, 2)
     channel, row, col = imgs[-1].shape
@@ -275,7 +276,7 @@ def train():
 
                 total_loss = loss_pc + loss_cc + loss_res
                 for lvl in range(readout_start_lvl, levels + 1):
-                    y_pred, att_weights = readout_list[lvl]
+                    y_pred  = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
                     if args.hs:
                         loss_ce = F.cross_entropy(y_pred, y) * hs.coef_lambda[lvl]
@@ -321,9 +322,7 @@ def train():
                         imagenet_normalize_inverse(x) if args.dataset in dataset_with_normalize else x
                     sample_g_arr = [
                         normalize_inverse(t[_].g[:10].detach()) for _ in range(length)]
-                    sample_atts = att_weights.detach().cpu().numpy()[:10]
-
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'train', n_branches=n_branches, n_levels=n_levels)
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, 'train', n_branches=n_branches, n_levels=n_levels)
 
                 tq.set_postfix({
                     'train_loss': total_loss.item(),
@@ -366,7 +365,7 @@ def train():
                 readout_list = readout(t, levels)
 
                 for lvl in range(readout_start_lvl, levels + 1):
-                    y_pred, att_weights = readout_list[lvl]
+                    y_pred = readout_list[lvl]
                     loss = kl_temperature(
                         y_pred, y, temperature=temp_arr[lvl]
                     )
@@ -389,9 +388,8 @@ def train():
                         imagenet_normalize_inverse(x) if args.dataset in dataset_with_normalize else x
                     sample_g_arr = [
                         normalize_inverse(t[_].g[:10]) for _ in range(length)]
-                    sample_atts = att_weights.cpu().numpy()[:10]
 
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_atts, 'valid', n_branches=n_branches, n_levels=levels)
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, 'valid', n_branches=n_branches, n_levels=levels)
 
                     # nearest neighbor construction
                     nnset = NearestNeighborImageSet(
@@ -486,7 +484,7 @@ def train():
                     readout_list = readout(t, levels)
 
                     for lvl in range(readout_start_lvl, levels + 1):
-                        y_pred, att_weights = readout_list[lvl]
+                        y_pred = readout_list[lvl]
                         loss = kl_temperature(
                             y_pred, y, temperature=temp_arr[lvl]
                         )
