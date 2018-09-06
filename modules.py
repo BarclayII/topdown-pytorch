@@ -8,6 +8,7 @@ import torchvision.models
 import numpy as np
 from glimpse import create_glimpse
 from util import cuda, area, intersection
+from transform import *
 import itertools
 
 def F_cauchy(ratio):
@@ -136,13 +137,16 @@ class WhatModule(nn.Module):
 
         self.fix = fix
 
-    def forward(self, glimpse_kxk):
+    def forward(self, glimpse_kxk, g):
         batch_size = glimpse_kxk.shape[0]
         if self.fix:
             with T.no_grad():
                 fm = self.cnn(glimpse_kxk)
         else:
             fm = self.cnn(glimpse_kxk)
+        fm_new = F_spatial_feature_map(fm, g, (16, 16))
+        assert False
+        # TODO derive new phi_what and phi_where from fm_new
         cnn_what = self.avgpool(fm).view(batch_size, -1)
         cnn_where = fm.view(batch_size, -1).detach()
         phi_what = self.mlp_what(cnn_what)
@@ -259,7 +263,7 @@ class TreeBuilder(nn.Module):
         x_g = self.glimpse(x, bbox)
         n_glimpses = x_g.shape[1]
         x_g_flat = x_g.view(batch_size * n_glimpses, *x_g.shape[2:])
-        phi_what, phi_where = self.net_phi[l](x_g_flat)
+        phi_what, phi_where = self.net_phi[l](x_g_flat, bbox)
         e_g = b.view(batch_size * n_glimpses, self.g_dims).detach()
         h_where = T.cat([phi_where, e_g], dim=-1)
         new_b = (self.net_b[l](h_where)
