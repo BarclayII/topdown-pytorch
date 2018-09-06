@@ -311,7 +311,7 @@ class TreeBuilder(nn.Module):
                 if l != lvl:
                     for j in range(self.n_branches):
                         t[i * self.n_branches + j + 1].b = new_b[:, k, j]
-                        t[i * self.n_branches + j + 1].par_h = t[i].h
+                        t[i * self.n_branches + j + 1].par_h = t[i].h.detach()
                 if l != 0:
                     pc_par.append(t[(i - 1) // self.n_branches].bbox)
                     pc_chd.append(t[i].bbox)
