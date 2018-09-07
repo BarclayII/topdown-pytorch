@@ -11,6 +11,8 @@ x = x.transpose(2, 0, 1)
 x = torch.FloatTensor(x)
 x = x[None]
 plt.imshow(x[0].numpy().transpose(1, 2, 0))
+plt.axis('off')
+plt.tight_layout()
 plt.show()
 
 glm = glimpse.GaussianGlimpse((50, 50))
@@ -34,12 +36,39 @@ Fx_inv = Fx_inv.unsqueeze(2)
 
 x = x.unsqueeze(1)
 g = Fy.transpose(-1, -2) @ x @ Fx
+plt.imshow(g[0, 0].detach().numpy().transpose(1, 2, 0))
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+plt.imshow(g[0, 1].detach().numpy().transpose(1, 2, 0))
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+
+# concat an alpha channel
+g = torch.cat([g, torch.ones(batch_size, n_glims, 1, n_glim_rows, n_glim_cols)], 2)
 
 x_inv = Fy_inv.transpose(-1, -2) @ g @ Fx_inv
 
 # To avoid weirdness in viz I clipped the values to between 0 and 1.
 # No need to do that in feature maps I guess.
 plt.imshow(x_inv.clamp(min=0, max=1)[0, 0].detach().numpy().transpose(1, 2, 0))
+plt.axis('off')
+plt.tight_layout()
 plt.show()
 plt.imshow(x_inv.clamp(min=0, max=1)[0, 1].detach().numpy().transpose(1, 2, 0))
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+
+# assuming that x_inv[:, 0] is the old image and x_inv[:, 1] is the new image
+# we wish to overlay atop the old one
+x_old, x_old_alpha = x_inv[:, 0, :-1], x_inv[:, 0, -1]
+x_new, x_new_alpha = x_inv[:, 1, :-1], x_inv[:, 1, -1]
+# We assume that the old image is *always* opaque (i.e. alpha = 1)
+# https://en.wikipedia.org/wiki/Alpha_compositing
+x_inv_overlay = x_new * x_new_alpha + x_old * (1 - x_new_alpha)
+plt.imshow(x_inv_overlay.clamp(min=0, max=1)[0].detach().numpy().transpose(1, 2, 0))
+plt.axis('off')
+plt.tight_layout()
 plt.show()
