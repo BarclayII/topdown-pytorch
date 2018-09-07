@@ -7,6 +7,12 @@ from distributions import LogNormal, SigmoidNormal
 _R = {}
 _C = {}
 
+def binverse(x):
+    # batched matrix inverse; https://stackoverflow.com/questions/46595157/
+    eye = x.new_ones(x.size(-1)).diag().expand_as(x)
+    x_inv, _ = T.gesv(eye, x)
+    return x_inv
+
 #@profile
 def gaussian_masks(c, d, s, len_, glim_len):
     '''
@@ -44,6 +50,15 @@ def gaussian_masks(c, d, s, len_, glim_len):
 
     mask = mask / (mask.sum(2, keepdim=True) + 1e-8)
     return mask
+
+def inverse_gaussian_masks(c, d, s, len_, target_len):
+    mask = gaussian_masks(c, d, s, len_, target_len)
+
+    mask_T = mask.transpose(-1, -2)
+    mask_T_mask = mask_T @ mask
+    mask_inv = binverse(mask_T_mask) @ mask_T
+
+    return mask_inv
 
 #@profile
 def extract_gaussian_glims(x, a, glim_size):

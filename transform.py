@@ -10,7 +10,7 @@ def inverse_gaussian_masks(c, d, s, len_, target_len):
     returns: (batch_size, len_, target_len)
     '''
     batch_size, _ = c.shape
-    # TODO correct masks
+    # TODO use glimpse.inverse_gaussian_masks
     return c.new(batch_size, len_, target_len).zero_()
 
 def F_spatial_feature_map(x, g, target_fm_shape):

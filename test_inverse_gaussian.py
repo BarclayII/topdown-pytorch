@@ -1,0 +1,45 @@
+# coding: utf-8
+# TODO: REMOVE THIS FILE
+import glimpse
+import torch
+import scipy.misc
+import matplotlib.pyplot as plt
+
+x = scipy.misc.imread('/home/gq/Pictures/a.jpg')
+x = x / 255.
+x = x.transpose(2, 0, 1)
+x = torch.FloatTensor(x)
+x = x[None]
+plt.imshow(x[0].numpy().transpose(1, 2, 0))
+plt.show()
+
+glm = glimpse.GaussianGlimpse((50, 50))
+
+a_rel = torch.FloatTensor([[0.5, 0.5, 1, 1, 0.5, 0.5], [0.3, 0.4, 0.6, 0.8, 0.3, 0.4]]).requires_grad_()
+a = glm._to_absolute_attention(a_rel[None], x.shape[-2:])
+
+cx, cy, dx, dy, sx, sy = torch.unbind(a, -1)
+batch_size, n_glims, _ = a.size()
+_, nchannels, nrows, ncols = x.size()
+n_glim_rows, n_glim_cols = 50, 50
+Fy = glimpse.gaussian_masks(cy, dy, sy, nrows, n_glim_rows)
+Fy_inv = glimpse.inverse_gaussian_masks(cy, dy, sy, nrows, n_glim_rows)
+Fx = glimpse.gaussian_masks(cx, dx, sx, ncols, n_glim_cols)
+Fx_inv = glimpse.inverse_gaussian_masks(cx, dx, sx, ncols, n_glim_cols)
+
+Fy = Fy.unsqueeze(2)
+Fx = Fx.unsqueeze(2)
+Fy_inv = Fy_inv.unsqueeze(2)
+Fx_inv = Fx_inv.unsqueeze(2)
+
+x = x.unsqueeze(1)
+g = Fy.transpose(-1, -2) @ x @ Fx
+
+x_inv = Fy_inv.transpose(-1, -2) @ g @ Fx_inv
+
+# To avoid weirdness in viz I clipped the values to between 0 and 1.
+# No need to do that in feature maps I guess.
+plt.imshow(x_inv.clamp(min=0, max=1)[0, 0].detach().numpy().transpose(1, 2, 0))
+plt.show()
+plt.imshow(x_inv.clamp(min=0, max=1)[0, 1].detach().numpy().transpose(1, 2, 0))
+plt.show()
