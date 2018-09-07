@@ -2,16 +2,7 @@ import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as INIT
-
-def inverse_gaussian_masks(c, d, s, len_, target_len):
-    '''
-    c, d, s: 2D Tensor (batch_size, 1)
-    len_, target_len: int
-    returns: (batch_size, len_, target_len)
-    '''
-    batch_size, _ = c.shape
-    # TODO use glimpse.inverse_gaussian_masks
-    return c.new(batch_size, len_, target_len).zero_()
+from glimpse import inverse_gaussian_masks
 
 def F_spatial_feature_map(x, g, target_fm_shape):
     """
