@@ -1,6 +1,7 @@
 import torch as T
 import torch.nn.functional as F
 import torch.nn as NN
+import numpy as np
 from util import *
 from distributions import LogNormal, SigmoidNormal
 
@@ -47,9 +48,15 @@ def gaussian_masks(c, d, s, len_, glim_len):
     mask = C - cr
     mask = (-0.5 * (mask / sr) ** 2)
     mask = mask.exp()
-
-    mask = mask / (mask.sum(2, keepdim=True) + 1e-8)
+    mask = mask / (mask.sum(2, keepdim=True) + 1e-8)  # / (s * np.sqrt(2 * np.pi) + 1e-8)
     return mask
+
+def inverse_gaussian_masks_surrogate(c, d, s, len_, target_len):
+    mask = gaussian_masks(c, d, s, len_, target_len)
+    mask_T = mask.transpose(-1, -2)
+    mask_inv = mask_T / (mask_T.sum(2, keepdim=True) + 1e-8)
+    return mask_inv
+
 
 def inverse_gaussian_masks(c, d, s, len_, target_len):
     mask = gaussian_masks(c, d, s, len_, target_len)
