@@ -102,11 +102,9 @@ class WhatModule(nn.Module):
                 kernel_size=kernel_size,
                 final_pool_size=final_pool_size
             )
-            in_dims_1 = filters[-1] * np.prod(final_pool_size)
             in_dims_0 = filters[-1]
         elif isinstance(cnn, str) and cnn.startswith('resnet'):
             cnn = getattr(torchvision.models, cnn)(pretrained=True)
-            in_dims_1 = cnn.fc.in_features * np.prod(final_pool_size)
             in_dims_0 = cnn.fc.in_features
             self.cnn = nn.Sequential(
                     cnn.conv1,
@@ -121,42 +119,22 @@ class WhatModule(nn.Module):
         else:
             self.cnn = cnn
             assert "Not implemented yet"
-
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
-        self.mlp_what = nn.Sequential(
-            nn.Linear(in_dims_0, h_dims),
-            nn.ReLU(),
-        )
-        self.mlp_where = nn.Sequential(
-            nn.Linear(in_dims_1, h_dims),
-
-            nn.ReLU(),
-        )
-        INIT.xavier_uniform_(self.mlp_where[0].weight)
-        INIT.constant_(self.mlp_where[0].bias, 0)
-
+        self.conv1x1 = nn.Conv2d(in_dims_0, h_dims, kernel_size=(1, 1))
         self.fix = fix
 
-    def forward(self, glimpse_kxk, g):
+    def forward(self, glimpse_kxk):
         batch_size = glimpse_kxk.shape[0]
         if self.fix:
             with T.no_grad():
-                fm = self.cnn(glimpse_kxk)
+                fm = self.conv1x1(self.cnn(glimpse_kxk))
         else:
-            fm = self.cnn(glimpse_kxk)
-        fm_new = F_spatial_feature_map(fm, g, (16, 16))
-        assert False
-        # TODO derive new phi_what and phi_where from fm_new
-        cnn_what = self.avgpool(fm).view(batch_size, -1)
-        cnn_where = fm.view(batch_size, -1).detach()
-        phi_what = self.mlp_what(cnn_what)
-        phi_where = self.mlp_where(cnn_where)
-        return phi_what, phi_where
+            fm = self.conv1x1(self.cnn(glimpse_kxk))
+        return fm
 
 class TreeItem(dict):
     def __init__(self, *args, **kwargs):
         dict.__init__(self, *args, **kwargs)
-        self._attrs = ['b', 'bbox', 'h', 'y', 'g']
+        self._attrs = ['b', 'bbox', 'fm', 'y', 'g', 'alpha']
 
     def __getattr__(self, name):
         if not name.startswith('_') and name in self._attrs:
@@ -222,8 +200,11 @@ class TreeBuilder(nn.Module):
                  ):
         super(TreeBuilder, self).__init__()
 
-        glimpse = create_glimpse(glimpse_type, glimpse_size)
+        fm_target_size = (15, 15)
+        fm_glim_size = final_pool_size
 
+        glimpse = create_glimpse(glimpse_type, glimpse_size)
+        glimpse_fm = create_glimpse(glimpse_type, fm_glim_size)
         g_dims = glimpse.att_params
 
         net_phi = nn.ModuleList(
@@ -232,9 +213,12 @@ class TreeBuilder(nn.Module):
                            in_dims=what__in_dims)
                 for _ in range(n_levels + 1)
                 )
+
         net_b = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(h_dims + g_dims, h_dims),
+                    nn.Linear(h_dims * np.prod(fm_target_size), h_dims),
+                    nn.ReLU(),
+                    nn.Linear(h_dims, h_dims),
                     nn.ReLU(),
                     nn.Linear(h_dims, g_dims * n_branches),
                     )
@@ -247,10 +231,13 @@ class TreeBuilder(nn.Module):
         self.net_phi = net_phi
         self.net_b = net_b
         self.glimpse = glimpse
+        self.glimpse_fm = glimpse_fm
         self.n_branches = n_branches
         self.n_levels = n_levels
         self.g_dims = g_dims
         self.h_dims = h_dims
+        self.fm_glim_size = fm_glim_size
+        self.fm_target_size = fm_target_size
 
     def noderange(self, level):
         return range(num_nodes(level - 1, self.n_branches), num_nodes(level, self.n_branches)) \
@@ -263,14 +250,14 @@ class TreeBuilder(nn.Module):
         x_g = self.glimpse(x, bbox)
         n_glimpses = x_g.shape[1]
         x_g_flat = x_g.view(batch_size * n_glimpses, *x_g.shape[2:])
-        phi_what, phi_where = self.net_phi[l](x_g_flat, bbox)
-        e_g = b.view(batch_size * n_glimpses, self.g_dims).detach()
-        h_where = T.cat([phi_where, e_g], dim=-1)
-        new_b = (self.net_b[l](h_where)
-                    .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
-        h_what = phi_what
-        h_what = h_what.view(batch_size, n_glimpses, *h_what.shape[1:])
-        return bbox, x_g, new_b, h_what
+        fm = self.net_phi[l](x_g_flat)
+        fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
+        abs_bbox = self.glimpse_fm._to_absolute_attention(bbox, self.fm_target_size)
+        fm_new, fm_alpha = F_spatial_feature_map(fm, abs_bbox, self.fm_target_size)
+
+        new_b = (self.net_b[l](fm_new.view(batch_size, n_glimpses, -1))
+                 .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
+        return bbox, x_g, new_b, fm_new, fm_alpha
 
     def forward(self, x, lvl=None):
         batch_size, channels, row, col = x.shape
@@ -292,7 +279,7 @@ class TreeBuilder(nn.Module):
         for l in range(0, lvl + 1):
             current_level = self.noderange(l)
             b = T.stack([t[i].b for i in current_level], 1)
-            bbox, g, new_b, h = self.forward_layer(x, l, b)
+            bbox, g, new_b, fm, alpha = self.forward_layer(x, l, b)
             # propagate
             for k, i in enumerate(current_level):
                 t[i].bbox = bbox[:, k]
@@ -302,7 +289,8 @@ class TreeBuilder(nn.Module):
                         F_reg_res(t[i].bbox, row, col, k_x, k_y)
 
                 t[i].g = g[:, k]
-                t[i].h = h[:, k]
+                t[i].fm = fm[:, k]
+                t[i].alpha = alpha[:, k]
 
                 if l != lvl:
                     for j in range(self.n_branches):
@@ -328,13 +316,14 @@ class HomoscedasticModule(nn.Module):
 class ReadoutModule(nn.Module):
     def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
         super(ReadoutModule, self).__init__()
-        self.rnn = nn.RNNCell(h_dims + g_dims, h_dims)
+        fm_target_size = (15, 15)
         self.predictor = nn.ModuleList(
             nn.Linear(h_dims, n_classes)
             for _ in range(n_levels + 1)
         )
         self.n_branches = n_branches
         self.n_levels = n_levels
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
 
     def forward(self, t, lvls=None):
         if lvls is None:
@@ -342,16 +331,21 @@ class ReadoutModule(nn.Module):
         results = []
         hs = []
         for lvl in range(lvls + 1):
-            def to_detach(h, idx):
+            def to_detach(x, idx):
                 if idx >= num_nodes(lvl - 1, self.n_branches):
-                    return h
+                    return x
                 else:
-                    return h.detach()
+                    return x.detach()
 
             nodes = t[:num_nodes(lvl, self.n_branches)]
-            h = T.stack([to_detach(node.h, idx) for idx, node in enumerate(nodes)], 1)
-            results.append(self.predictor[lvl](h.mean(dim=1)))
-            hs.append(h.mean(dim=1))
+            accum_fm = 0
+            for idx, node in enumerate(nodes):
+                accum_fm = accum_fm * (1 - node.alpha) +\
+                    to_detach(node.fm, idx) * node.alpha
+            h = self.avgpool(accum_fm)
+            h = h.view(h.shape[0], -1)
+            results.append(self.predictor[lvl](h))
+            hs.append(h)
 
         self.hs = hs
         return results

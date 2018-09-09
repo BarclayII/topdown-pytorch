@@ -52,14 +52,25 @@ def gaussian_masks(c, d, s, len_, glim_len):
     return mask
 
 def inverse_gaussian_masks_surrogate(c, d, s, len_, target_len):
-    mask = gaussian_masks(c, d, s, len_, target_len)
+    '''
+    c, d, s: 2D Tensor (batch_size, n_glims)
+    len_, target_len: int
+    returns: 4D Tensor (batch_size, n_glims, target_len, len_)
+        each row is a 1D Gaussian
+    '''
+    mask = gaussian_masks(c, d, s, target_len, len_)
     mask_T = mask.transpose(-1, -2)
     mask_inv = mask_T / (mask_T.sum(2, keepdim=True) + 1e-8)
     return mask_inv
 
-
 def inverse_gaussian_masks(c, d, s, len_, target_len):
-    mask = gaussian_masks(c, d, s, len_, target_len)
+    '''
+    c, d, s: 2D Tensor (batch_size, n_glims)
+    len_, target_len: int
+    returns: 4D Tensor (batch_size, n_glims, target_len, len_)
+        each row is a 1D Gaussian
+    '''
+    mask = gaussian_masks(c, d, s, target_len, len_)
 
     mask_T = mask.transpose(-1, -2)
     mask_T_mask = mask_T @ mask
