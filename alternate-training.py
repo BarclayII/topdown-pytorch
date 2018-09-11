@@ -315,7 +315,7 @@ def train():
                     bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
                     length = len(t)
                     sample_bboxs = [
-                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
+                            glimpse_to_xyhw(t[k].b[:10, :4].detach()) * bbox_scaler
                             for k in range(1, length)
                             ]
                     normalize_inverse = lambda x: \
@@ -381,7 +381,7 @@ def train():
                     length = len(t)
                     bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
                     sample_bboxs = [
-                            glimpse_to_xyhw(t[k].bbox[:10, :4].detach()) * bbox_scaler
+                            glimpse_to_xyhw(t[k].b[:10, :4].detach()) * bbox_scaler
                             for k in range(1, length)
                             ]
                     normalize_inverse = lambda x: \
@@ -414,7 +414,7 @@ def train():
                         readout_list = readout(t, levels)
                         bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
                         sample_bboxs = [
-                                glimpse_to_xyhw(t[k].bbox[:, :4].detach()) * bbox_scaler
+                                glimpse_to_xyhw(t[k].b[:, :4].detach()) * bbox_scaler
                                 for k in range(1, length)
                                 ]
                         nnset.push(

@@ -121,63 +121,35 @@ class GaussianGlimpse(NN.Module):
     @classmethod
     def full(cls):
         return tovar([0.5, 0.5, 1, 1, 0.5, 0.5])
-        #return tovar([0.5, 0.5, 1, 1, 0.1, 0.1])
 
     @classmethod
-    def rescale(cls, x, glimpse_sample):
-        if not glimpse_sample:
-            y = [
-                    #F.sigmoid(x[..., 0]),    # cx
-                    #F.sigmoid(x[..., 1]),    # cy
-                    #F.sigmoid(x[..., 2]) * 2,
-                    #F.sigmoid(x[..., 3]) * 2,
-                    #F.sigmoid(x[..., 4]),
-                    #F.sigmoid(x[..., 5]),
-                    x[..., 0] + 0.5,
-                    x[..., 1] + 0.5,
-                    huber(x[..., 2] + 1.5),
-                    huber(x[..., 3] + 1.5),
-                    F.sigmoid(x[..., 4]),
-                    F.sigmoid(x[..., 5]),
-                    #T.zeros_like(x[..., 4]) + 0.1,
-                    #T.zeros_like(x[..., 5]) + 0.1,
-                    ]
-            logprob = 0
-        else:
-            y = [
-                    F.sigmoid(x[..., 0]),    # cx
-                    F.sigmoid(x[..., 1]),    # cy
-                    F.sigmoid(x[..., 2]) * 2,
-                    F.sigmoid(x[..., 3]) * 2,
-                    T.zeros_like(x[..., 4]),
-                    T.zeros_like(x[..., 5]),
-                    ]
-            diag = T.stack([
-                y[0] - y[2] / 2,
-                y[1] - y[3] / 2,
-                y[0] + y[2] / 2,
-                y[1] + y[3] / 2,
-                ], -1)
-            diagN = T.distributions.Normal(
-                    diag, T.ones_like(diag) * 0.1)
-            diag = diagN.sample()
-            diag_logprob = diagN.log_prob(diag)
+    def rescale(cls, b):
+        c = 1
+        cx = F.tanh(b[..., 0]) / 2
+        cy = F.tanh(b[..., 1]) / 2
+        dx = F.sigmoid(b[..., 2] + c)
+        dy = F.sigmoid(b[..., 3] + c)
+        sx = F.sigmoid(b[..., 4] + c)
+        sy = F.sigmoid(b[..., 5] + c)
+        return T.stack([cx, cy, dx, dy, sx, sy], dim=-1)
 
-            s = F.sigmoid(T.stack([y[4], y[5]], -1))
-            #sSN = SigmoidNormal(s, T.ones_like(s) * 0.05)
-            #s = sSN.sample()
-            #s_logprob = sSN.log_prob(s)
-            s_logprob = T.zeros_like(s)
-            y = [
-                    (diag[..., 0] + diag[..., 2]) / 2,
-                    (diag[..., 1] + diag[..., 3]) / 2,
-                    diag[..., 2] - diag[..., 0],
-                    diag[..., 3] - diag[..., 1],
-                    s[..., 0],
-                    s[..., 1],
-                    ]
-            logprob = T.cat([diag_logprob, s_logprob], -1)
-        return T.stack(y, -1), logprob
+    @classmethod
+    def upd_b(cls, b, delta_b):
+        d_cx, d_cy, d_dx, d_dy, d_sx, d_sy = T.unbind(delta_b, -1)
+        cx = b[..., 0]
+        cy = b[..., 1]
+        dx = b[..., 2]
+        dy = b[..., 3]
+        sx = b[..., 4]
+        sy = b[..., 5]
+        return T.stack([
+            cx + d_cx * dx,
+            cy + d_cy * dy,
+            dx * d_dx,
+            dy * d_dy,
+            sx * d_sx,
+            sy * d_sy
+        ], -1)
 
     @classmethod
     def absolute_to_relative(cls, att, absolute):
