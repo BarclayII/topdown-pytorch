@@ -183,7 +183,7 @@ class TreeBuilder(nn.Module):
                  what_filters=[16, 32, 64, 128, 256],
                  where_filters=[16, 32],
                  kernel_size=(3, 3),
-                 final_pool_size=(5, 5), #(4, 4),
+                 final_pool_size=(2, 2), #(4, 4),
                  h_dims=128,
                  a_dims=50,
                  n_classes=10,
@@ -200,7 +200,7 @@ class TreeBuilder(nn.Module):
                  ):
         super(TreeBuilder, self).__init__()
 
-        fm_target_size = (15, 15)
+        fm_target_size = (10, 10)
         fm_glim_size = final_pool_size
 
         glimpse = create_glimpse(glimpse_type, glimpse_size)
@@ -216,7 +216,7 @@ class TreeBuilder(nn.Module):
 
         net_b = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(h_dims * np.prod(fm_target_size), h_dims),
+                    nn.Linear(h_dims * np.prod(final_pool_size) + g_dims, h_dims),
                     nn.ReLU(),
                     nn.Linear(h_dims, h_dims),
                     nn.ReLU(),
@@ -254,9 +254,12 @@ class TreeBuilder(nn.Module):
         fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
         abs_bbox = self.glimpse_fm._to_absolute_attention(bbox, self.fm_target_size)
         fm_new, fm_alpha = F_spatial_feature_map(fm, abs_bbox, self.fm_target_size)
-
-        new_b = (self.net_b[l](fm_new.view(batch_size, n_glimpses, -1))
-                 .view(batch_size, n_glimpses, self.n_branches, self.g_dims))
+        new_b = self.net_b[l](
+            T.cat([
+                fm.detach().view(batch_size, n_glimpses, -1),
+                b
+                ], dim=-1)
+        ).view(batch_size, n_glimpses, self.n_branches, self.g_dims)
         return bbox, x_g, new_b, fm_new, fm_alpha
 
     def forward(self, x, lvl=None):
@@ -316,7 +319,6 @@ class HomoscedasticModule(nn.Module):
 class ReadoutModule(nn.Module):
     def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
         super(ReadoutModule, self).__init__()
-        fm_target_size = (15, 15)
         self.predictor = nn.ModuleList(
             nn.Linear(h_dims, n_classes)
             for _ in range(n_levels + 1)

@@ -18,7 +18,7 @@ def F_spatial_feature_map(x, absolute_att, target_fm_shape):
     target_rows, target_cols = target_fm_shape
     cx, cy, dx, dy, sx, sy = T.unbind(absolute_att, -1)
 
-   # with T.no_grad():
+    # with T.no_grad():
     # (batch_size, n_glims, rows, target_rows)
     Fy_inv = inverse_gaussian_masks_surrogate(cy, dy, sy, rows, target_rows).detach()
     # (batch_size, n_glims, cols, target_cols)
