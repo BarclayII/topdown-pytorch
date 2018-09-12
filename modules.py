@@ -208,6 +208,7 @@ class TreeBuilder(nn.Module):
         glimpse_fm = create_glimpse(glimpse_type, fm_glim_size)
         g_dims = glimpse.att_params
 
+        print(n_levels)
         net_phi = nn.ModuleList(
                 WhatModule(what_filters, kernel_size, final_pool_size, h_dims,
                            n_classes, cnn=what__cnn, fix=what__fix,
@@ -218,6 +219,8 @@ class TreeBuilder(nn.Module):
         net_b = nn.ModuleList(
                 nn.Sequential(
                     nn.Linear(h_dims * np.prod(final_pool_size), h_dims),
+                    nn.ReLU(),
+                    nn.Linear(h_dims, h_dims),
                     nn.ReLU(),
                     nn.Linear(h_dims, g_dims * n_branches),
                     )
@@ -256,7 +259,7 @@ class TreeBuilder(nn.Module):
                 fm.detach().view(batch_size, n_glimpses, -1)
         ).view(batch_size, n_glimpses, self.n_branches, self.g_dims)
         delta_b = self.glimpse.rescale(delta_b)
-        new_b = self.glimpse.upd_b(b.detach().unsqueeze(2).repeat(1, 1, self.n_branches, 1), delta_b)
+        new_b = self.glimpse.upd_b(b.unsqueeze(2).repeat(1, 1, self.n_branches, 1), delta_b)
         return x_g, new_b, fm_new, fm_alpha
 
     def forward(self, x, lvl=None):
@@ -344,8 +347,10 @@ class ReadoutModule(nn.Module):
             nodes = t[:num_nodes(lvl, self.n_branches)]
             accum_fm = 0
             for idx, node in enumerate(nodes):
+#                accum_fm = accum_fm + to_detach(node.fm, idx)
                 accum_fm = accum_fm * (1 - node.alpha) +\
                     to_detach(node.fm, idx) * node.alpha
+#            accum_fm /= len(nodes)
             h = self.avgpool(accum_fm)
             h = h.view(h.shape[0], -1)
             results.append(self.predictor[lvl](h))

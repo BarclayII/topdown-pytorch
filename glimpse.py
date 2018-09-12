@@ -124,13 +124,12 @@ class GaussianGlimpse(NN.Module):
 
     @classmethod
     def rescale(cls, b):
-        c = 1
-        cx = F.tanh(b[..., 0]) / 2
-        cy = F.tanh(b[..., 1]) / 2
-        dx = F.sigmoid(b[..., 2] + c)
-        dy = F.sigmoid(b[..., 3] + c)
-        sx = F.sigmoid(b[..., 4] + c)
-        sy = F.sigmoid(b[..., 5] + c)
+        cx = F.sigmoid(b[..., 0]) - 0.5
+        cy = F.sigmoid(b[..., 1]) - 0.5
+        dx = F.sigmoid(b[..., 2]) #F.sigmoid(b[..., 2] + c)
+        dy = F.sigmoid(b[..., 3]) #F.sigmoid(b[..., 3] + c)
+        sx = F.sigmoid(b[..., 4]) #F.sigmoid(b[..., 4] + c)
+        sy = F.sigmoid(b[..., 5]) #F.sigmoid(b[..., 5] + c)
         return T.stack([cx, cy, dx, dy, sx, sy], dim=-1)
 
     @classmethod
@@ -143,8 +142,8 @@ class GaussianGlimpse(NN.Module):
         sx = b[..., 4]
         sy = b[..., 5]
         return T.stack([
-            cx + d_cx * dx,
-            cy + d_cy * dy,
+            cx + d_cx * (1 - d_dx) * dx,
+            cy + d_cy * (1 - d_dy) * dy,
             dx * d_dx,
             dy * d_dy,
             sx * d_sx,

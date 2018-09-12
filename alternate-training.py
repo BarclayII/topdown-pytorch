@@ -211,7 +211,8 @@ dataset_with_normalize = ['cifar10', 'imagenet', 'flower', 'bird', 'dogs']
 #@profile
 def train():
     best_epoch = 0
-    best_valid_loss = 1e6
+    #best_valid_loss = 1e6
+    best_valid_acc = 0
     best_acc = 0
     levels = args.levels_from
 
@@ -446,8 +447,10 @@ def train():
             T.save(builder, 'checkpoints/{}_builder_{}.pt'.format(expr_setting, epoch))
             T.save(readout, 'checkpoints/{}_readout_{}.pt'.format(expr_setting, epoch))
 
-        if best_valid_loss > avg_loss:
-            best_valid_loss = avg_loss
+        #if best_valid_loss > avg_loss:
+        if best_valid_acc < acc:
+            #best_valid_loss = avg_loss
+            best_valid_acc = acc
             T.save(builder.state_dict(), 'checkpoints/{}_builder_best.pt'.format(expr_setting))
             T.save(readout.state_dict(), 'checkpoints/{}_readout_best.pt'.format(expr_setting))
             best_epoch = epoch
