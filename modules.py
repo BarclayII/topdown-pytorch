@@ -200,7 +200,7 @@ class TreeBuilder(nn.Module):
                  ):
         super(TreeBuilder, self).__init__()
 
-        final_channel = 256
+        final_channels = 256
         glimpse = create_glimpse(glimpse_type, glimpse_size)
         g_dims = glimpse.att_params
 
@@ -213,7 +213,7 @@ class TreeBuilder(nn.Module):
 
         net_b = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(final_channel * np.prod(final_pool_size), h_dims),
+                    nn.Linear(final_channels * np.prod(final_pool_size), h_dims),
                     nn.ReLU(),
                     nn.Linear(h_dims, h_dims),
                     nn.ReLU(),
@@ -226,7 +226,14 @@ class TreeBuilder(nn.Module):
             nn.Sequential(
                 nn.Linear(g_dims, h_dims),
                 nn.ReLU(),
-                nn.Linear(h_dims, h_dims)
+            )
+            for _ in range(n_levels + 1)
+        )
+
+        net_h2h = nn.ModuleList(
+            nn.Sequential(
+                nn.Linear(h_dims + final_channels * 2 * 2, h_dims),
+                nn.ReLU()
             )
             for _ in range(n_levels + 1)
         )
@@ -237,6 +244,7 @@ class TreeBuilder(nn.Module):
         self.net_phi = net_phi
         self.net_b = net_b
         self.net_b2h = net_b2h
+        self.net_h2h = net_h2h
         self.glimpse = glimpse
         self.n_branches = n_branches
         self.n_levels = n_levels
@@ -294,7 +302,7 @@ class TreeBuilder(nn.Module):
                         F_reg_res(t[i].b, row, col, k_x, k_y)
 
                 t[i].g = g[:, k]
-                t[i].fm = T.cat([fm[:, k], self.net_b2h[l](t[i].b)], dim=-1)
+                t[i].fm = self.net_h2h[l](T.cat([fm[:, k], self.net_b2h[l](t[i].b)], dim=-1))
 
                 if l != lvl:
                     for j in range(self.n_branches):
@@ -323,7 +331,7 @@ class ReadoutModule(nn.Module):
         final_channels = 256
         self.predictor = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(final_channels * 2 * 2 + h_dims, h_dims),
+                    nn.Linear(h_dims, h_dims),
                     nn.ReLU(),
                     nn.Linear(h_dims, n_classes)
                 ) for _ in range(n_levels + 1)
