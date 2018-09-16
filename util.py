@@ -99,3 +99,8 @@ def glimpse_to_channel(glimpse_type='gaussian', glimpse_size=15):
         pass
     return func
 
+
+def list_index_select(x, index):
+    if T.is_tensor(x):
+        return x[index]
+    return [_x[index] for _x in x]

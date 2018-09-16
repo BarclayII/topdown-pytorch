@@ -119,7 +119,7 @@ class WhatModule(nn.Module):
             )
         else:
             self.cnn = cnn
-            assert "Not implemented yet"
+            raise NotImplementedError
         self.conv1x1 = nn.Conv2d(in_dims_0, h_dims, kernel_size=(1, 1))
         self.fix = fix
 
@@ -131,6 +131,48 @@ class WhatModule(nn.Module):
         else:
             fm = self.conv1x1(self.cnn(glimpse_kxk))
         return fm
+
+
+class InverseGlimpse(nn.Module):
+    def __init__(self, glimpse_fm, fm_target_size):
+        super().__init__(self)
+        self.glimpse_fm = glimpse_fm
+        self.fm_target_size = fm_target_size
+
+    def forward(self, fm, b):
+        abs_b = self.glimpse_fm._to_absolute_attention(b, self.fm_target_size)
+        fm_new, fm_alpha = F_spatial_feature_map(fm, abs_b, self.fm_target_size)
+        return fm_new, fm_alpha
+
+
+class GlimpseUpdater(nn.Module):
+    def __init__(self, glimpse, input_dims, h_dims, g_dims, n_branches):
+        super().__init__(self)
+        self.glimpse = glimpse
+        net_b = nn.ModuleList(
+                nn.Sequential(
+                    nn.Linear(input_dims, h_dims),
+                    nn.ReLU(),
+                    nn.Linear(h_dims, h_dims),
+                    nn.ReLU(),
+                    nn.Linear(h_dims, g_dims * n_branches),
+                    )
+                for _ in range(n_levels + 1)
+                )
+        self.net_b = net_b
+        self.n_branches = n_branches
+        self.g_dims = g_dims
+
+    def forward(self, b, h, l):
+        fm, alpha = h
+        batch_size, n_glimpses = fm.shape[:2]
+        delta_b = self.net_b[l](
+                fm.detach().view(batch_size, n_glimpses, -1)
+        ).view(batch_size, n_glimpses, self.n_branches, self.g_dims)
+        delta_b = self.glimpse.rescale(delta_b)
+        new_b = self.glimpse.upd_b(b.unsqueeze(2).repeat(1, 1, self.n_branches, 1), delta_b)
+        return new_b
+
 
 class TreeItem(dict):
     def __init__(self, *args, **kwargs):
@@ -216,22 +258,21 @@ class TreeBuilder(nn.Module):
                 for _ in range(n_levels + 1)
                 )
 
-        net_b = nn.ModuleList(
-                nn.Sequential(
-                    nn.Linear(h_dims * np.prod(final_pool_size), h_dims),
-                    nn.ReLU(),
-                    nn.Linear(h_dims, h_dims),
-                    nn.ReLU(),
-                    nn.Linear(h_dims, g_dims * n_branches),
-                    )
-                for _ in range(n_levels + 1)
+        net_h = InverseGlimpse(glimpse_fm, fm_target_size)
+        upd_b = GlimpseUpdater(
+                glimpse,
+                h_dims * np.prod(final_pool_size),
+                h_dims,
+                g_dims,
+                n_branches
                 )
 
         self.pc_coef = pc_coef
         self.cc_coef = cc_coef
         self.res_coef = res_coef
         self.net_phi = net_phi
-        self.net_b = net_b
+        self.net_h = net_h
+        self.upd_b = upd_b
         self.glimpse = glimpse
         self.glimpse_fm = glimpse_fm
         self.n_branches = n_branches
@@ -246,6 +287,7 @@ class TreeBuilder(nn.Module):
                 if self.n_branches > 1 \
                 else range(level, level + 1)
 
+    '''
     def forward_layer(self, x, l, b):
         batch_size = x.shape[0]
         x_g = self.glimpse(x, b)
@@ -261,6 +303,18 @@ class TreeBuilder(nn.Module):
         delta_b = self.glimpse.rescale(delta_b)
         new_b = self.glimpse.upd_b(b.unsqueeze(2).repeat(1, 1, self.n_branches, 1), delta_b)
         return x_g, new_b, fm_new, fm_alpha
+    '''
+
+    def forward_layer(self, x, l, b):
+        batch_size = x.shape[0]
+        x_g = self.glimpse(x, b)
+        n_glimpses = x_g.shape[1]
+        x_g_flat = x_g.view(batch_size * n_glimpses, *x_g.shape[2:])
+        fm = self.net_phi[l](x_g_flat)
+        fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
+        h = self.net_h(fm, b)
+        new_b = self.upd_b(b, h, l)
+        return x_g, new_b, h
 
     def forward(self, x, lvl=None):
         batch_size, channels, row, col = x.shape
@@ -285,7 +339,7 @@ class TreeBuilder(nn.Module):
         for l in range(0, lvl + 1):
             current_level = self.noderange(l)
             b = T.stack([t[i].b for i in current_level], 1)
-            g, new_b, fm, alpha = self.forward_layer(x, l, b)
+            g, new_b, h = self.forward_layer(x, l, b)
             # propagate
             for k, i in enumerate(current_level):
                 if l == lvl:
@@ -293,13 +347,13 @@ class TreeBuilder(nn.Module):
                     loss_res += (1. / len(current_level)) *\
                         F_reg_res(t[i].b, row, col, k_x, k_y)
 
-                t[i].g = g[:, k]
-                t[i].fm = fm[:, k]
-                t[i].alpha = alpha[:, k]
+                t[i].g = list_index_select(g, (slice(None), k))
+                t[i].h = list_index_select(h, (slice(None), k))
 
                 if l != lvl:
                     for j in range(self.n_branches):
-                        t[i * self.n_branches + j + 1].b = new_b[:, k, j]
+                        t[i * self.n_branches + j + 1].b = list_index_select(
+                                new_b, (slice(None), k, j))
                 if l != 0:
                     pc_par.append(t[(i - 1) // self.n_branches].b)
                     pc_chd.append(t[i].b)
