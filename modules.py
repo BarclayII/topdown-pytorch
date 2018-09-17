@@ -69,6 +69,12 @@ def F_reg_cc(chd_a, chd_b):
                    F.relu((intersection_area + 1e-6) / (area_b + 1e-6) - margin)
     return chds_penalty
 
+def noderange(self, n_branches, level):
+    return range(num_nodes(level - 1, n_branches), num_nodes(level, n_branches)) \
+            if n_branches > 1 \
+            else range(level, level + 1)
+
+
 def build_cnn(**config):
     cnn_list = []
     filters = config['filters']
@@ -220,6 +226,67 @@ class SelfAttentionModule(nn.Module):
             return T.ones(*input.shape[:-1], 1, device=input.device)
 
 
+class Regularizer(nn.Module):
+    def __init__(self, coef, owner):
+        super().__init__(self)
+        self.coef = coef
+        self.owner = owner
+        self.n_branches = owner.n_branches
+        self.n_levels = owner.n_levels
+
+
+class PCRegularizer(Regularizer):
+    def forward(self, t, lvl=None):
+        if lvl is None:
+            lvl = self.n_levels
+
+        pc_par = []
+        pc_chd = []
+
+        for l in range(1, lvl + 1):
+            current_level = noderange(self.n_branches, l)
+            for k, i in enumerate(current_level):
+                pc_par.append(t[(i - 1) // self.n_branches].b)
+                pc_chd.append(t[i].b)
+
+        loss_pc = F_reg_pc(T.stack(pc_par, 1), T.stack(pc_chd, 1)) if lvl >= 1 else x.new(1).zero_()
+        return self.coef * loss_pc
+
+
+class CCRegularizer(Regularizer):
+    def forward(self, t, lvl=None):
+        if lvl is None:
+            lvl = self.n_levels
+
+        cc_chd_a = []
+        cc_chd_b = []
+
+        for l in range(1, lvl + 1):
+            current_level = noderange(self.n_branches, l)
+            for k, i in enumerate(current_level):
+                if (k + 1) % self.n_branches == 0:
+                    for i, j in itertools.combinations(range(k - self.n_branches + 1, k + 1), 2):
+                        cc_chd_a.append(t[current_level[i]].b)
+                        cc_chd_b.append(t[current_level[j]].b)
+
+        loss_cc = F_reg_cc(T.stack(cc_chd_a, 1), T.stack(cc_chd_b, 1)) if lvl >= 1 and self.n_branches > 1 else x.new(1).zero_()
+        return self.coef * loss_cc
+
+
+class ResRegularizer(Regularizer):
+    def forward(self, t, lvl=None):
+        if lvl is None:
+            lvl = self.n_levels
+
+        loss_res = 0
+        current_level = noderange(self.n_branches, lvl)
+        k_x, k_y = self.owner.glimpse.glim_size
+        for k, i in enumerate(current_level):
+            loss_res += (1. / len(current_level)) * F_reg_res(t[i].b, row, col, k_x, k_y)
+
+        return self.coef * loss_res
+
+
 class TreeBuilder(nn.Module):
     def __init__(self,
                  glimpse_size=(15, 15),
@@ -234,9 +301,11 @@ class TreeBuilder(nn.Module):
                  n_levels=1,
                  att_type='self',
                  glimpse_type='gaussian',
-                 pc_coef=0,
-                 cc_coef=0,
-                 res_coef=0,
+                 regularizer_classes={
+                     PCRegularizer: 0,
+                     CCRegularizer: 0,
+                     ResRegularizer: 0,
+                     },
                  what__cnn=None,
                  what__fix=False,
                  what__in_dims=None,
@@ -267,9 +336,6 @@ class TreeBuilder(nn.Module):
                 n_branches
                 )
 
-        self.pc_coef = pc_coef
-        self.cc_coef = cc_coef
-        self.res_coef = res_coef
         self.net_phi = net_phi
         self.net_h = net_h
         self.upd_b = upd_b
@@ -282,10 +348,9 @@ class TreeBuilder(nn.Module):
         self.fm_glim_size = fm_glim_size
         self.fm_target_size = fm_target_size
 
-    def noderange(self, level):
-        return range(num_nodes(level - 1, self.n_branches), num_nodes(level, self.n_branches)) \
-                if self.n_branches > 1 \
-                else range(level, level + 1)
+        self.regs = nn.ModuleList()
+        for reg_cls, reg_coef in regularizer_classes.items():
+            self.regs.append(reg_cls(reg_coef, self))
 
     '''
     def forward_layer(self, x, l, b):
@@ -328,25 +393,12 @@ class TreeBuilder(nn.Module):
         t[0].b[:, 2:4] = 1
         t[0].b[:, 4:] = 0.5
 
-        loss_pc = 0
-        loss_cc = 0
-        loss_res = 0
-        pc_par = []
-        pc_chd = []
-        cc_chd_a = []
-        cc_chd_b = []
-
         for l in range(0, lvl + 1):
-            current_level = self.noderange(l)
+            current_level = noderange(self.n_branches, l)
             b = T.stack([t[i].b for i in current_level], 1)
             g, new_b, h = self.forward_layer(x, l, b)
             # propagate
             for k, i in enumerate(current_level):
-                if l == lvl:
-                    k_x, k_y = self.glimpse.glim_size
-                    loss_res += (1. / len(current_level)) *\
-                        F_reg_res(t[i].b, row, col, k_x, k_y)
-
                 t[i].g = list_index_select(g, (slice(None), k))
                 t[i].h = list_index_select(h, (slice(None), k))
 
@@ -354,18 +406,10 @@ class TreeBuilder(nn.Module):
                     for j in range(self.n_branches):
                         t[i * self.n_branches + j + 1].b = list_index_select(
                                 new_b, (slice(None), k, j))
-                if l != 0:
-                    pc_par.append(t[(i - 1) // self.n_branches].b)
-                    pc_chd.append(t[i].b)
-                    if (k + 1) % self.n_branches == 0:
-                        for i, j in itertools.combinations(range(k - self.n_branches + 1, k + 1), 2):
-                            cc_chd_a.append(t[current_level[i]].b)
-                            cc_chd_b.append(t[current_level[j]].b)
 
-        loss_pc = F_reg_pc(T.stack(pc_par, 1), T.stack(pc_chd, 1)) if lvl >= 1 else x.new(1).zero_()
-        loss_cc = F_reg_cc(T.stack(cc_chd_a, 1), T.stack(cc_chd_b, 1)) if lvl >= 1 and self.n_branches > 1 else x.new(1).zero_()
+        regularizer_losses = [r(t, lvl) for r in self.regs]
 
-        return t, (loss_pc * self.pc_coef, loss_cc * self.cc_coef, loss_res * self.res_coef)
+        return t, regularizer_losses
 
 class HomoscedasticModule(nn.Module):
     def __init__(self, n_levels):
@@ -412,6 +456,7 @@ class ReadoutModule(nn.Module):
 
         self.hs = hs
         return results
+
 
 """
 class MultiscaleGlimpse(nn.Module):
