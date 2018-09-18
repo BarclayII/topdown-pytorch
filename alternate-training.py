@@ -1,3 +1,12 @@
+"""
+TODO's:
+1. Scheduler
+2. Accelerate Nearest Neighbors (Currently we make it an option in argparse)
+3. Visualization of CNN feature maps
+4. Levelwise early stop
+5. Failure cases
+"""
+
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,8 +27,6 @@ from modules import *
 import tqdm
 
 T.set_num_threads(4)
-#temp_arr = [1, 0.3, 0.01]
-temp_arr = [0.01, 0.01, 0.01]
 
 parser = argparse.ArgumentParser(description='Alternative')
 parser.add_argument('--resume', default=None, help='resume training from checkpoint')
@@ -30,17 +37,15 @@ parser.add_argument('--batch_size', default=32, type=int, help='batch size')
 parser.add_argument('--log_interval', default=10, type=int, help='log interval')
 parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
 parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
-parser.add_argument('--hs', action='store_true', help='indicates whether to use homoscedastic uncertainty or not')
 parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
-parser.add_argument('--att_type', default='mean', type=str, help='attention type: mean/naive/tanh')
-parser.add_argument('--pc_coef', default=1, type=float, help='regularization parameter(parent-child)')
+parser.add_argument('--nearest', action='store_true', help='indicates whether to visualize nearest neighbors or not')
+# PC coef is not necessary when using relative position. The coefficient is set to 0 by default.
+parser.add_argument('--pc_coef', default=0, type=float, help='regularization parameter(parent-child)')
 parser.add_argument('--cc_coef', default=0, type=float, help='regularization parameter(child-child)')
-parser.add_argument('--rank_coef', default=0.1, type=float, help='coefficient for rank loss')
 parser.add_argument('--res_coef', default=1, type=float, help='coefficient for resolution loss')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--levels_from', default=2, type=int, help='levels from')
-parser.add_argument('--rank', action='store_true', help='use rank loss')
 parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
 parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
 parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, mnistcluttered, cifar10, imagenet, flower, bird)')
@@ -51,7 +56,7 @@ parser.add_argument('--size_max', default=28, type=int, help='Object maximum siz
 parser.add_argument('--imagenet_root', default='/beegfs/qg323', type=str)
 parser.add_argument('--imagenet_train_sel', default='selected-train.pkl', type=str)
 parser.add_argument('--imagenet_valid_sel', default='selected-val.pkl', type=str)
-parser.add_argument('--glm_size', default=15, type=int)
+parser.add_argument('--glm_size', default=12, type=int)
 parser.add_argument('--num_workers', default=0, type=int)
 parser.add_argument('--n_gpus', default=1, type=int)
 parser.add_argument('--fix', action='store_true')
@@ -113,20 +118,19 @@ elif args.dataset == 'bird':
     cnn = 'resnet50'
     in_dims = None
 
-if args.hs is True:
-    hs = cuda(HomoscedasticModule(n_levels + 1))
-
 if args.resume is not None:
     builder = T.load('checkpoints/{}_builder_{}.pt'.format(expr_setting, args.resume))
     readout = T.load('checkpoints/{}_readout_{}.pt'.format(expr_setting, args.resume))
 else:
+    regularizer_classes = {
+        PCRegularizer: args.pc_coef,
+        CCRegularizer: args.cc_coef,
+        ResRegularizer: args.res_coef
+    }
     builder = cuda(nn.DataParallel(TreeBuilder(n_branches=n_branches,
                             n_levels=n_levels,
-                            att_type=args.att_type,
-                            pc_coef=args.pc_coef,
-                            cc_coef=args.cc_coef,
-                            res_coef=args.res_coef,
                             n_classes=n_classes,
+                            regularizer_classes=regularizer_classes,
                             glimpse_type=args.glm_type,
                             glimpse_size=(args.glm_size, args.glm_size),
                             what__cnn=cnn,
@@ -141,10 +145,6 @@ batch_size = args.batch_size
 
 loss_arr = []
 acc_arr = []
-
-def rank_loss(a, b, margin=0):
-    #return (b - a + margin).clamp(min=0).mean()
-    return F.sigmoid(b - a).mean()
 
 def imagenet_normalize_inverse(x):
     mean = T.FloatTensor([0.485, 0.456, 0.406]).to(x)
@@ -210,15 +210,14 @@ dataset_with_normalize = ['cifar10', 'imagenet', 'flower', 'bird', 'dogs']
 
 #@profile
 def train():
-    best_epoch = 0
-    #best_valid_loss = 1e6
-    best_valid_acc = 0
-    best_acc = 0
+    lvl_turn = 0
+    coef_lvl = [1 for _ in range(n_levels + 1)]
+    best_epoch = [0 for _ in range(n_levels + 1)]
+    best_valid_loss = [1e6 for _ in range(n_levels + 1)]
     levels = args.levels_from
-
     n_train_batches = len(train_loader)
 
-    params = list(builder.parameters()) + list(readout.parameters()) + (list(hs.parameters()) if args.hs else [])
+    params = list(builder.parameters()) + list(readout.parameters())
     if args.dataset.startswith('mnist'):
         lr = 1e-4
         opt = T.optim.RMSprop(params, lr=1e-4)
@@ -242,13 +241,13 @@ def train():
         train_loss_dict = {
             'pc': 0.,
             'cc': 0.,
-            'rank': 0,
             'ce': 0,
             'res': 0,
         }
         hit = 0
         cnt = 0
         levelwise_hit = np.zeros(n_levels + 1)
+        levelwise_loss = np.zeros(n_levels + 1)
 
         builder.train(mode=True)
         readout.train(mode=True)
@@ -279,27 +278,14 @@ def train():
                 for lvl in range(readout_start_lvl, levels + 1):
                     y_pred  = readout_list[lvl]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
-                    if args.hs:
-                        loss_ce = F.cross_entropy(y_pred, y) * hs.coef_lambda[lvl]
-                    else:
-                        loss_ce = kl_temperature(y_pred, y, temp_arr[lvl]) # F.cross_entropy(y_pred, y).clamp(min=2)
+                    loss_ce = F.cross_entropy(y_pred, y) * coef_lvl[lvl]
                     train_loss_dict['ce'] += loss_ce.item()
+                    levelwise_loss[lvl] += loss_ce.item()
                     loss = loss_ce
-
-                    if args.rank and lvl > readout_start_lvl:
-                        loss_rank = rank_loss(y_score, y_score_last)
-                        loss = loss + args.rank_coef * loss_rank
-                        train_loss_dict['rank'] += args.rank_coef * loss_rank.item()
 
                     y_score_last = y_score
 
                     total_loss = total_loss + loss
-                    if args.hs:
-                        """
-                        Homoscedastic Loss
-                        """
-                        total_loss = total_loss + (T.log(hs.coef_lambda)).sum()
-
                     current_hit = (y_pred.max(dim=-1)[1] == y).sum().item()
                     levelwise_hit[lvl] += current_hit
 
@@ -337,18 +323,16 @@ def train():
         for key in train_loss_dict.keys():
             train_loss_dict[key] /= n_train_batches
         writer.add_scalars('data/train_loss_dict', train_loss_dict, epoch)
+        levelwise_loss = levelwise_loss * 1.0 / i
         levelwise_acc = levelwise_hit * 1.0 / cnt
-        writer.add_scalars('data/train_levelwise_loss', {str(lvl): levelwise_acc[lvl] for lvl in range(levels + 1)}, epoch)
-        if args.hs:
-            coef_lambda = hs.coef_lambda.cpu().tolist()
-            lambda_dict = {
-                str(k): v for k, v in enumerate(coef_lambda)
-            }
-            writer.add_scalars('data/coef_lambda', lambda_dict, epoch)
+        writer.add_scalars('data/train_levelwise_acc', {str(lvl): levelwise_acc[lvl] for lvl in range(levels + 1)}, epoch)
+        writer.add_scalars('data/train_levelwise_loss', {str(lvl): levelwise_loss[lvl] for lvl in range(levels + 1)}, epoch)
 
+        # Validation phase
         hit = 0
         cnt = 0
         levelwise_hit = np.zeros(n_levels + 1)
+        levelwise_loss = np.zeros(n_levels + 1)
         sum_loss = 0
         builder.eval()
         readout.eval()
@@ -367,14 +351,16 @@ def train():
 
                 for lvl in range(readout_start_lvl, levels + 1):
                     y_pred = readout_list[lvl]
-                    loss = kl_temperature(
-                        y_pred, y, temperature=temp_arr[lvl]
+
+                    loss = F.cross_entropy(
+                        y_pred, y
                     )
                     total_loss += loss
+                    levelwise_loss[lvl] += loss.item()
                     levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
 
                 sum_loss += total_loss.item()
-                hit = levelwise_hit[levels]# - 1]
+                hit = levelwise_hit[levels]
                 cnt += args.v_batch_size
 
                 if i == 0:
@@ -392,44 +378,46 @@ def train():
 
                     viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, 'valid', n_branches=n_branches, n_levels=levels)
 
-                    # nearest neighbor construction
-                    nnset = NearestNeighborImageSet(
-                            sample_imgs.permute(0, 2, 3, 1),
-                            T.cat(readout.module.hs, 1)[:10],
-                            bboxs=sample_bboxs,
-                            clrs=getclrs(n_branches, levels),
-                            title=[str(_y_pred) + '/' + str(_y)
-                                   for _y_pred, _y in zip(y_pred.max(-1)[1], y)],
-                            )
-
-                    print()
-                    for j, item_train in tqdm.tqdm(enumerate(train_loader)):
-                        x, y, b = preprocessor(item_train)
-                        print(x.shape, y.shape, file=logfile)
-                        if args.dataset in dataset_with_normalize:
-                            x_in = imagenet_normalize(x)
-                        else:
-                            x_in = x
-
-                        t, _ = builder(x_in, levels)
-                        readout_list = readout(t, levels)
-                        bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
-                        sample_bboxs = [
-                                glimpse_to_xyhw(t[k].b[:, :4].detach()) * bbox_scaler
-                                for k in range(1, length)
-                                ]
-                        nnset.push(
-                                x.permute(0, 2, 3, 1),
-                                T.cat(readout.module.hs, 1),
+                    if args.nearest:
+                        # nearest neighbor construction
+                        nnset = NearestNeighborImageSet(
+                                sample_imgs.permute(0, 2, 3, 1),
+                                T.cat(readout.module.hs, 1)[:10],
                                 bboxs=sample_bboxs,
                                 clrs=getclrs(n_branches, levels),
-                                title=[str(_y) for _y in y],
+                                title=[str(_y_pred) + '/' + str(_y)
+                                    for _y_pred, _y in zip(y_pred.max(-1)[1], y)],
                                 )
 
-                    nnset.display()
-                    writer.add_image('Image/val/nn', fig_to_ndarray_tb(nnset.stat_plot.fig), epoch)
+                        print()
+                        for j, item_train in tqdm.tqdm(enumerate(train_loader)):
+                            x, y, b = preprocessor(item_train)
+                            print(x.shape, y.shape, file=logfile)
+                            if args.dataset in dataset_with_normalize:
+                                x_in = imagenet_normalize(x)
+                            else:
+                                x_in = x
+
+                            t, _ = builder(x_in, levels)
+                            readout_list = readout(t, levels)
+                            bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
+                            sample_bboxs = [
+                                    glimpse_to_xyhw(t[k].b[:, :4].detach()) * bbox_scaler
+                                    for k in range(1, length)
+                            ]
+                            nnset.push(
+                                    x.permute(0, 2, 3, 1),
+                                    T.cat(readout.module.hs, 1),
+                                    bboxs=sample_bboxs,
+                                    clrs=getclrs(n_branches, levels),
+                                    title=[str(_y) for _y in y],
+                            )
+
+                        nnset.display()
+                        writer.add_image('Image/val/nn', fig_to_ndarray_tb(nnset.stat_plot.fig), epoch)
 
         avg_loss = sum_loss / i
+        levelwise_loss = levelwise_loss * 1.0 / i
         acc = hit * 1.0 / cnt
         levelwise_acc = levelwise_hit * 1.0 / cnt
         print("Loss on valid set: {}".format(avg_loss))
@@ -437,7 +425,8 @@ def train():
 
         writer.add_scalar('data/loss', avg_loss, epoch)
         if args.schedule:
-            writer.add_scalars('data/levelwise_loss', {str(lvl): levelwise_acc[lvl] for lvl in range(levels + 1)}, epoch)
+            writer.add_scalars('data/levelwise_acc', {str(lvl): levelwise_acc[lvl] for lvl in range(levels + 1)}, epoch)
+            writer.add_scalars('data/levelwise_loss', {str(lvl): levelwise_loss[lvl] for lvl in range(levels + 1)}, epoch)
         writer.add_scalar('data/accuracy', acc, epoch)
 
         if (epoch + 1) % 10 == 0:
@@ -447,15 +436,16 @@ def train():
             T.save(builder, 'checkpoints/{}_builder_{}.pt'.format(expr_setting, epoch))
             T.save(readout, 'checkpoints/{}_readout_{}.pt'.format(expr_setting, epoch))
 
-        #if best_valid_loss > avg_loss:
-        if best_valid_acc < acc:
-            #best_valid_loss = avg_loss
-            best_valid_acc = acc
+        if best_valid_loss[lvl_turn] > avg_loss:
+            best_valid_loss[lvl_turn] = avg_loss
             T.save(builder.state_dict(), 'checkpoints/{}_builder_best.pt'.format(expr_setting))
             T.save(readout.state_dict(), 'checkpoints/{}_readout_best.pt'.format(expr_setting))
-            best_epoch = epoch
-        elif best_epoch < epoch - 20 and lr > 1e-4 and args.dataset in dataset_with_sgd_schedule:
-            best_epoch = epoch
+            best_epoch[lvl_turn] = epoch
+        elif best_epoch[lvl_turn] < epoch - 20 and lr > 1e-4 and args.dataset in dataset_with_sgd_schedule:
+            # TODO
+            raise NotImplementedError
+            """
+            best_epoch[-1] = epoch
             if levels < 2:
                 print('Increasing level...')
                 levels += 1
@@ -466,47 +456,50 @@ def train():
                     pg['lr'] = lr
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
-        elif (best_epoch < epoch - 10 or epoch == n_epochs - 1) and test_loader is not None:
-            print('Early Stopping...')
+            """
+        elif (best_epoch[lvl_turn] < epoch - 10 or epoch == n_epochs - 1) and test_loader is not None:
+            print('Early Stopping on level {}...'.format(lvl_turn))
+            lvl_turn += 1
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
-            cnt = 0
-            hit = 0
-            levelwise_hit = np.zeros(n_levels + 1)
-            sum_loss = 0
-            with T.no_grad():
-                for i, item in enumerate(tqdm.tqdm(test_loader)):
-                    x, y, b = preprocessor(item)
-                    if args.dataset in dataset_with_normalize:
-                        x_in = imagenet_normalize(x)
-                    else:
-                        x_in = x
+            if lvl_turn == n_levels + 1:
+                cnt = 0
+                hit = 0
+                levelwise_hit = np.zeros(n_levels + 1)
+                sum_loss = 0
+                with T.no_grad():
+                    for i, item in enumerate(tqdm.tqdm(test_loader)):
+                        x, y, b = preprocessor(item)
+                        if args.dataset in dataset_with_normalize:
+                            x_in = imagenet_normalize(x)
+                        else:
+                            x_in = x
 
-                    total_loss = 0
-                    t, _ = builder(x_in, levels)
-                    readout_list = readout(t, levels)
+                        total_loss = 0
+                        t, _ = builder(x_in, levels)
+                        readout_list = readout(t, levels)
 
-                    for lvl in range(readout_start_lvl, levels + 1):
-                        y_pred = readout_list[lvl]
-                        loss = kl_temperature(
-                            y_pred, y, temperature=temp_arr[lvl]
-                        )
-                        total_loss += loss
-                        levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
+                        for lvl in range(readout_start_lvl, levels + 1):
+                            y_pred = readout_list[lvl]
+                            loss = F.cross_entropy(
+                                y_pred, y
+                            )
+                            total_loss += loss
+                            levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
 
-                    sum_loss += total_loss.item()
-                    hit = levelwise_hit[levels]
-                    cnt += args.v_batch_size
+                        sum_loss += total_loss.item()
+                        hit = levelwise_hit[levels]
+                        cnt += args.v_batch_size
 
-            avg_loss = sum_loss / i
-            acc = hit * 1.0 / cnt
-            levelwise_acc = levelwise_hit * 1.0 / cnt
-            print("Loss on test set: {}".format(avg_loss))
-            print("Accuracy on test set: {}".format(acc))
+                avg_loss = sum_loss / i
+                acc = hit * 1.0 / cnt
+                levelwise_acc = levelwise_hit * 1.0 / cnt
+                print("Loss on test set: {}".format(avg_loss))
+                print("Accuracy on test set: {}".format(acc))
 
-            for lvl in range(levels + 1):
-                print("Levelwise accuracy on level {}: {}".format(lvl, levelwise_acc[lvl]))
-            break
+                for lvl in range(levels + 1):
+                    print("Levelwise accuracy on level {}: {}".format(lvl, levelwise_acc[lvl]))
+                break
 
 if __name__ == '__main__':
     train()

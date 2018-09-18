@@ -7,7 +7,7 @@ import torchvision
 import torchvision.models
 import numpy as np
 from glimpse import create_glimpse
-from util import cuda, area, intersection
+from util import cuda, area, intersection, list_index_select
 from transform import *
 import itertools
 
@@ -69,7 +69,7 @@ def F_reg_cc(chd_a, chd_b):
                    F.relu((intersection_area + 1e-6) / (area_b + 1e-6) - margin)
     return chds_penalty
 
-def noderange(self, n_branches, level):
+def noderange(n_branches, level):
     return range(num_nodes(level - 1, n_branches), num_nodes(level, n_branches)) \
             if n_branches > 1 \
             else range(level, level + 1)
@@ -141,7 +141,7 @@ class WhatModule(nn.Module):
 
 class InverseGlimpse(nn.Module):
     def __init__(self, glimpse_fm, fm_target_size):
-        super().__init__(self)
+        super(InverseGlimpse, self).__init__()
         self.glimpse_fm = glimpse_fm
         self.fm_target_size = fm_target_size
 
@@ -150,10 +150,9 @@ class InverseGlimpse(nn.Module):
         fm_new, fm_alpha = F_spatial_feature_map(fm, abs_b, self.fm_target_size)
         return fm_new, fm_alpha
 
-
 class GlimpseUpdater(nn.Module):
-    def __init__(self, glimpse, input_dims, h_dims, g_dims, n_branches):
-        super().__init__(self)
+    def __init__(self, glimpse, input_dims, h_dims, g_dims, n_branches, n_levels):
+        super(GlimpseUpdater, self).__init__()
         self.glimpse = glimpse
         net_b = nn.ModuleList(
                 nn.Sequential(
@@ -170,7 +169,8 @@ class GlimpseUpdater(nn.Module):
         self.g_dims = g_dims
 
     def forward(self, b, h, l):
-        fm, alpha = h
+        #fm, alpha = h
+        fm = h
         batch_size, n_glimpses = fm.shape[:2]
         delta_b = self.net_b[l](
                 fm.detach().view(batch_size, n_glimpses, -1)
@@ -183,7 +183,7 @@ class GlimpseUpdater(nn.Module):
 class TreeItem(dict):
     def __init__(self, *args, **kwargs):
         dict.__init__(self, *args, **kwargs)
-        self._attrs = ['b', 'fm', 'y', 'g', 'alpha']
+        self._attrs = ['b', 'h', 'y', 'g', 'alpha']
 
     def __getattr__(self, name):
         if not name.startswith('_') and name in self._attrs:
@@ -201,42 +201,20 @@ class TreeItem(dict):
             dict.__delattr__(self, name)
 
 
-class SelfAttentionModule(nn.Module):
-    def __init__(self, h_dims, a_dims, att_type=None):
-        super(SelfAttentionModule, self).__init__()
-        if att_type == 'tanh':
-            self.net_att = nn.Sequential(
-                nn.Linear(h_dims, a_dims),
-                nn.Tanh(),
-                nn.Linear(a_dims, 1, bias=False)
-            )
-        elif att_type == 'naive':
-            self.net_att = nn.Sequential(
-                nn.Linear(h_dims, 1),
-                nn.LeakyReLU()
-            )
-        else:  # 'mean'
-            self.net_att = None
-
-    #@profile
-    def forward(self, input):
-        if self.net_att is not None:
-            return self.net_att(input)
-        else:
-            return T.ones(*input.shape[:-1], 1, device=input.device)
-
-
 class Regularizer(nn.Module):
     def __init__(self, coef, owner):
-        super().__init__(self)
+        super(Regularizer, self).__init__()
         self.coef = coef
-        self.owner = owner
+        self.owner = [owner]
         self.n_branches = owner.n_branches
         self.n_levels = owner.n_levels
 
 
 class PCRegularizer(Regularizer):
-    def forward(self, t, lvl=None):
+    def forward(self, t, row, col, lvl=None):
+        """
+        row and col is not required here. (unified interface with resolution regularizer)
+        """
         if lvl is None:
             lvl = self.n_levels
 
@@ -254,7 +232,10 @@ class PCRegularizer(Regularizer):
 
 
 class CCRegularizer(Regularizer):
-    def forward(self, t, lvl=None):
+    def forward(self, t, row, col, lvl=None):
+        """
+        row and col is not required here. (unified interface with resolution regularizer)
+        """
         if lvl is None:
             lvl = self.n_levels
 
@@ -269,18 +250,18 @@ class CCRegularizer(Regularizer):
                         cc_chd_a.append(t[current_level[i]].b)
                         cc_chd_b.append(t[current_level[j]].b)
 
-        loss_cc = F_reg_cc(T.stack(cc_chd_a, 1), T.stack(cc_chd_b, 1)) if lvl >= 1 and self.n_branches > 1 else x.new(1).zero_()
+        loss_cc = F_reg_cc(T.stack(cc_chd_a, 1), T.stack(cc_chd_b, 1)) if lvl >= 1 and self.n_branches > 1 else cuda(T.zeros(1)) #x.new(1).zero_()
         return self.coef * loss_cc
 
 
 class ResRegularizer(Regularizer):
-    def forward(self, t, lvl=None):
+    def forward(self, t, row, col, lvl=None):
         if lvl is None:
             lvl = self.n_levels
 
         loss_res = 0
         current_level = noderange(self.n_branches, lvl)
-        k_x, k_y = self.owner.glimpse.glim_size
+        k_x, k_y = self.owner[0].glimpse.glim_size
         for k, i in enumerate(current_level):
             loss_res += (1. / len(current_level)) * F_reg_res(t[i].b, row, col, k_x, k_y)
 
@@ -299,7 +280,6 @@ class TreeBuilder(nn.Module):
                  n_classes=10,
                  n_branches=1,
                  n_levels=1,
-                 att_type='self',
                  glimpse_type='gaussian',
                  regularizer_classes={
                      PCRegularizer: 0,
@@ -319,7 +299,6 @@ class TreeBuilder(nn.Module):
         glimpse_fm = create_glimpse(glimpse_type, fm_glim_size)
         g_dims = glimpse.att_params
 
-        print(n_levels)
         net_phi = nn.ModuleList(
                 WhatModule(what_filters, kernel_size, final_pool_size, h_dims,
                            n_classes, cnn=what__cnn, fix=what__fix,
@@ -333,7 +312,8 @@ class TreeBuilder(nn.Module):
                 h_dims * np.prod(final_pool_size),
                 h_dims,
                 g_dims,
-                n_branches
+                n_branches,
+                n_levels
                 )
 
         self.net_phi = net_phi
@@ -377,9 +357,9 @@ class TreeBuilder(nn.Module):
         x_g_flat = x_g.view(batch_size * n_glimpses, *x_g.shape[2:])
         fm = self.net_phi[l](x_g_flat)
         fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
-        h = self.net_h(fm, b)
-        new_b = self.upd_b(b, h, l)
-        return x_g, new_b, h
+        h, alpha = self.net_h(fm, b)
+        new_b = self.upd_b(b, fm, l)
+        return x_g, new_b, (h, alpha)
 
     def forward(self, x, lvl=None):
         batch_size, channels, row, col = x.shape
@@ -396,25 +376,21 @@ class TreeBuilder(nn.Module):
         for l in range(0, lvl + 1):
             current_level = noderange(self.n_branches, l)
             b = T.stack([t[i].b for i in current_level], 1)
-            g, new_b, h = self.forward_layer(x, l, b)
+            g, new_b, (h, alpha) = self.forward_layer(x, l, b)
             # propagate
             for k, i in enumerate(current_level):
                 t[i].g = list_index_select(g, (slice(None), k))
                 t[i].h = list_index_select(h, (slice(None), k))
+                t[i].alpha = list_index_select(alpha, (slice(None), k))
 
                 if l != lvl:
                     for j in range(self.n_branches):
                         t[i * self.n_branches + j + 1].b = list_index_select(
                                 new_b, (slice(None), k, j))
 
-        regularizer_losses = [r(t, lvl) for r in self.regs]
+        regularizer_losses = [r(t, row, col, lvl) for r in self.regs]
 
         return t, regularizer_losses
-
-class HomoscedasticModule(nn.Module):
-    def __init__(self, n_levels):
-        super(HomoscedasticModule, self).__init__()
-        self.coef_lambda = nn.Parameter(T.ones(n_levels), requires_grad=True)
 
 class ReadoutModule(nn.Module):
     def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
@@ -428,7 +404,7 @@ class ReadoutModule(nn.Module):
             )
         self.n_branches = n_branches
         self.n_levels = n_levels
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        self.avgpool = nn.AdaptiveMaxPool2d(1)
 
     def forward(self, t, lvls=None):
         if lvls is None:
@@ -445,10 +421,8 @@ class ReadoutModule(nn.Module):
             nodes = t[:num_nodes(lvl, self.n_branches)]
             accum_fm = 0
             for idx, node in enumerate(nodes):
-#                accum_fm = accum_fm + to_detach(node.fm, idx)
                 accum_fm = accum_fm * (1 - node.alpha) +\
-                    to_detach(node.fm, idx) * node.alpha
-#            accum_fm /= len(nodes)
+                    to_detach(node.h, idx) * node.alpha
             h = self.avgpool(accum_fm)
             h = h.view(h.shape[0], -1)
             results.append(self.predictor[lvl](h))
