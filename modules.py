@@ -398,6 +398,9 @@ class TreeBuilder(nn.Module):
         return t, regularizer_losses
 
 class AlphaChannelReadoutModule(nn.Module):
+    '''
+    Only works when using inverse glimpse (i.e. have fm and alpha channels)
+    '''
     def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
         super(ReadoutModule, self).__init__()
         self.predictor = nn.ModuleList(
@@ -428,6 +431,40 @@ class AlphaChannelReadoutModule(nn.Module):
             results.append(self.predictor[lvl](h))
             hs.append(h)
             accum_fm.detach_()
+
+        self.hs = hs
+        return results
+
+
+class NodewiseMaxPoolingReadoutModule(nn.Module):
+    '''
+    Only works when h is a hidden state tensor
+    '''
+    def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
+        super(ReadoutModule, self).__init__()
+        self.predictor = nn.ModuleList(
+                nn.Sequential(
+                    nn.Linear(h_dims, h_dims),
+                    nn.ReLU(),
+                    nn.Linear(h_dims, n_classes)
+                ) for _ in range(n_levels + 1)
+            )
+        self.n_branches = n_branches
+        self.n_levels = n_levels
+
+    def forward(self, t, lvls=None):
+        if lvls is None:
+            lvls = self.n_levels
+
+        results = []
+        hs = []
+
+        for lvl in range(lvls + 1):
+            # Includes all nodes before the @lvl'th level
+            nodes = t[:num_nodes(lvl, self.n_branches)]
+            h, _ = T.stack([node.h for node in nodes], 1).max(1)
+            results.append(self.predictor[lvl](h))
+            hs.append(h)
 
         self.hs = hs
         return results
