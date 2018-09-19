@@ -282,6 +282,8 @@ class TreeBuilder(nn.Module):
                  n_branches=1,
                  n_levels=1,
                  glimpse_type='gaussian',
+                 explore=False,
+                 bind=False,
                  regularizer_classes={
                      PCRegularizer: 0,
                      CCRegularizer: 0,
@@ -296,7 +298,7 @@ class TreeBuilder(nn.Module):
         fm_target_size = (10, 10) #(16, 16)
         fm_glim_size = final_pool_size
 
-        glimpse = create_glimpse(glimpse_type, glimpse_size, explore=True)
+        glimpse = create_glimpse(glimpse_type, glimpse_size, explore=explore, bind=bind)
         glimpse_fm = create_glimpse(glimpse_type, fm_glim_size)
         g_dims = glimpse.att_params
 
