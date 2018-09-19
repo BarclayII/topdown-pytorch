@@ -360,11 +360,11 @@ class TreeBuilder(nn.Module):
         x_g_flat = x_g.view(batch_size * n_glimpses, *x_g.shape[2:])
         fm = self.net_phi[l](x_g_flat)
         fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
-        h, alpha = self.net_h(fm, b)
+        h = self.net_h(fm, b)
         new_b = None
         if l < self.n_levels:
             new_b = self.upd_b(b, fm, l)
-        return x_g, new_b, (h, alpha)
+        return x_g, new_b, h
 
     def forward(self, x, lvl=None):
         batch_size, channels, row, col = x.shape
@@ -381,12 +381,12 @@ class TreeBuilder(nn.Module):
         for l in range(0, lvl + 1):
             current_level = noderange(self.n_branches, l)
             b = T.stack([t[i].b for i in current_level], 1)
-            g, new_b, (h, alpha) = self.forward_layer(x, l, b)
+            g, new_b, h = self.forward_layer(x, l, b)
             # propagate
             for k, i in enumerate(current_level):
                 t[i].g = list_index_select(g, (slice(None), k))
+                # If we are using inverse glimpse, each h contains a tuple (fm, alpha)
                 t[i].h = list_index_select(h, (slice(None), k))
-                t[i].alpha = list_index_select(alpha, (slice(None), k))
 
                 if l != lvl:
                     for j in range(self.n_branches):
@@ -397,7 +397,7 @@ class TreeBuilder(nn.Module):
 
         return t, regularizer_losses
 
-class ReadoutModule(nn.Module):
+class AlphaChannelReadoutModule(nn.Module):
     def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
         super(ReadoutModule, self).__init__()
         self.predictor = nn.ModuleList(
@@ -421,7 +421,8 @@ class ReadoutModule(nn.Module):
             nodes = t[num_nodes(lvl - 1, self.n_branches): num_nodes(lvl, self.n_branches)]
             random.shuffle(nodes)
             for node in nodes:
-                accum_fm = accum_fm * (1 - node.alpha) + node.h * node.alpha
+                fm, alpha = node.h
+                accum_fm = accum_fm * (1 - alpha) + fm * alpha
             h = self.avgpool(accum_fm)
             h = h.view(h.shape[0], -1)
             results.append(self.predictor[lvl](h))
