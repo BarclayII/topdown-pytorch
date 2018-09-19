@@ -354,7 +354,7 @@ def train():
 
                     loss = F.cross_entropy(
                         y_pred, y
-                    )
+                    ) * coef_lvl[lvl]
                     total_loss += loss
                     levelwise_loss[lvl] += loss.item()
                     levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
@@ -436,12 +436,12 @@ def train():
             T.save(builder, 'checkpoints/{}_builder_{}.pt'.format(expr_setting, epoch))
             T.save(readout, 'checkpoints/{}_readout_{}.pt'.format(expr_setting, epoch))
 
-        if best_valid_loss[lvl_turn] > avg_loss:
-            best_valid_loss[lvl_turn] = avg_loss
+        if best_valid_loss[lvl_turn] > levelwise_loss[lvl_turn]:
+            best_valid_loss[lvl_turn] = levelwise_loss[lvl_turn]
             T.save(builder.state_dict(), 'checkpoints/{}_builder_best.pt'.format(expr_setting))
             T.save(readout.state_dict(), 'checkpoints/{}_readout_best.pt'.format(expr_setting))
             best_epoch[lvl_turn] = epoch
-        elif best_epoch[lvl_turn] < epoch - 20 and lr > 1e-4 and args.dataset in dataset_with_sgd_schedule:
+        elif best_epoch[lvl_turn] <= epoch - 20 and lr > 1e-4 and args.dataset in dataset_with_sgd_schedule:
             # TODO
             raise NotImplementedError
             """
@@ -457,8 +457,9 @@ def train():
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
             """
-        elif (best_epoch[lvl_turn] < epoch - 10 or epoch == n_epochs - 1) and test_loader is not None:
+        elif (best_epoch[lvl_turn] <= epoch - 5 or epoch == n_epochs - 1) and test_loader is not None:
             print('Early Stopping on level {}...'.format(lvl_turn))
+            coef_lvl[lvl_turn] = 0
             lvl_turn += 1
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
@@ -483,7 +484,7 @@ def train():
                             y_pred = readout_list[lvl]
                             loss = F.cross_entropy(
                                 y_pred, y
-                            )
+                            ) * coef_lvl[lvl]
                             total_loss += loss
                             levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
 

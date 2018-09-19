@@ -114,27 +114,53 @@ softplus_zero = F.softplus(tovar([0]))
 class GaussianGlimpse(NN.Module):
     att_params = 6
 
-    def __init__(self, glim_size):
+    def __init__(self, glim_size, explore=False, bind=False):
         NN.Module.__init__(self)
         self.glim_size = glim_size
+        self.explore = explore
+        self.bind = bind
 
     @classmethod
     def full(cls):
         return tovar([0.5, 0.5, 1, 1, 0.5, 0.5])
 
-    @classmethod
-    def rescale(cls, b):
-        cx = F.sigmoid(b[..., 0]) - 0.5
-        cy = F.sigmoid(b[..., 1]) - 0.5
-        dx = F.sigmoid(b[..., 2])
-        dy = F.sigmoid(b[..., 3])
-        sx = F.sigmoid(b[..., 4])
-        sy = F.sigmoid(b[..., 5])
+    def rescale(self, b):
+        if self.explore and self.training:
+            shp = b.shape[:-1]
+            noise_cx = cuda(T.randn(*shp)) * 0.2
+            noise_cy = cuda(T.randn(*shp)) * 0.2
+            noise_dx = 0 #cuda(T.randn(*shp)) * 0.1
+            noise_dy = 0 #cuda(T.randn(*shp)) * 0.1
+            noise_sx = 0 #cuda(T.randn(*shp)) * 0.1
+            noise_sy = 0 #cuda(T.randn(*shp)) * 0.1
+        else:
+            noise_cx = 0
+            noise_cy = 0
+            noise_dx = 0
+            noise_dy = 0
+            noise_sx = 0
+            noise_sy = 0
+        cx = T.sigmoid(b[..., 0]) - 0.5 + noise_cx
+        cy = T.sigmoid(b[..., 1]) - 0.5 + noise_cy
+        dx = T.sigmoid(b[..., 2]) + noise_dx
+        dy = T.sigmoid(b[..., 3]) + noise_dy
+        if self.bind:
+            sx = dx
+            sy = dy
+        else:
+            sx = T.sigmoid(b[..., 4]) + noise_sx
+            sy = T.sigmoid(b[..., 5]) + noise_sy
         return T.stack([cx, cy, dx, dy, sx, sy], dim=-1)
 
     @classmethod
     def upd_b(cls, b, delta_b):
-        d_cx, d_cy, d_dx, d_dy, d_sx, d_sy = T.unbind(delta_b, -1)
+        #d_cx, d_cy, d_dx, d_dy, d_sx, d_sy = T.unbind(delta_b, -1)
+        d_cx = delta_b[..., 0]
+        d_cy = delta_b[..., 1]
+        d_dx = delta_b[..., 2]
+        d_dy = delta_b[..., 3]
+        d_sx = delta_b[..., 4]
+        d_sy = delta_b[..., 5]
         cx = b[..., 0]
         cy = b[..., 1]
         dx = b[..., 2]
@@ -376,5 +402,5 @@ glimpse_table = {
         'gaussian': GaussianGlimpse,
         'bilinear': BilinearGlimpse,
         }
-def create_glimpse(name, size):
-    return glimpse_table[name](size)
+def create_glimpse(name, size, **kwargs):
+    return glimpse_table[name](size, **kwargs)

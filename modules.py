@@ -10,6 +10,7 @@ from glimpse import create_glimpse
 from util import cuda, area, intersection, list_index_select
 from transform import *
 import itertools
+import random
 
 def F_cauchy(ratio):
     return T.log(1 + T.abs(ratio - 1))
@@ -295,7 +296,7 @@ class TreeBuilder(nn.Module):
         fm_target_size = (10, 10) #(16, 16)
         fm_glim_size = final_pool_size
 
-        glimpse = create_glimpse(glimpse_type, glimpse_size)
+        glimpse = create_glimpse(glimpse_type, glimpse_size, explore=True)
         glimpse_fm = create_glimpse(glimpse_type, fm_glim_size)
         g_dims = glimpse.att_params
 
@@ -358,7 +359,9 @@ class TreeBuilder(nn.Module):
         fm = self.net_phi[l](x_g_flat)
         fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
         h, alpha = self.net_h(fm, b)
-        new_b = self.upd_b(b, fm, l)
+        new_b = None
+        if l < self.n_levels:
+            new_b = self.upd_b(b, fm, l)
         return x_g, new_b, (h, alpha)
 
     def forward(self, x, lvl=None):
@@ -411,22 +414,17 @@ class ReadoutModule(nn.Module):
             lvls = self.n_levels
         results = []
         hs = []
+        accum_fm = 0
         for lvl in range(lvls + 1):
-            def to_detach(x, idx):
-                if idx >= num_nodes(lvl - 1, self.n_branches):
-                    return x
-                else:
-                    return x.detach()
-
-            nodes = t[:num_nodes(lvl, self.n_branches)]
-            accum_fm = 0
-            for idx, node in enumerate(nodes):
-                accum_fm = accum_fm * (1 - node.alpha) +\
-                    to_detach(node.h, idx) * node.alpha
+            nodes = t[num_nodes(lvl - 1, self.n_branches): num_nodes(lvl, self.n_branches)]
+            random.shuffle(nodes)
+            for node in nodes:
+                accum_fm = accum_fm * (1 - node.alpha) + node.h * node.alpha
             h = self.avgpool(accum_fm)
             h = h.view(h.shape[0], -1)
             results.append(self.predictor[lvl](h))
             hs.append(h)
+            accum_fm.detach_()
 
         self.hs = hs
         return results
