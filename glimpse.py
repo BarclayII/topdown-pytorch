@@ -127,8 +127,8 @@ class GaussianGlimpse(NN.Module):
     def rescale(self, b):
         if self.explore and self.training:
             shp = b.shape[:-1]
-            noise_cx = cuda(T.randn(*shp)) * 0.2
-            noise_cy = cuda(T.randn(*shp)) * 0.2
+            noise_cx = cuda(T.randn(*shp)) * 0.3
+            noise_cy = cuda(T.randn(*shp)) * 0.3
             noise_dx = 0 #cuda(T.randn(*shp)) * 0.1
             noise_dy = 0 #cuda(T.randn(*shp)) * 0.1
             noise_sx = 0 #cuda(T.randn(*shp)) * 0.1

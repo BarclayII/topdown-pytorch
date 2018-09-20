@@ -37,4 +37,4 @@ def F_spatial_feature_map(x, absolute_att, target_fm_shape):
 
     # (batch_size, n_glims, n_channels, target_rows, target_cols)
     spatial_fm = Fy_inv.transpose(-1, -2) @ x @ Fx_inv
-    return spatial_fm[:, :, :-1, ...], spatial_fm[:, :, -1:, ...]
+    return spatial_fm[:, :, :-1, ...], spatial_fm[:, :, -1:, ...].detach()

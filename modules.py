@@ -128,15 +128,16 @@ class WhatModule(nn.Module):
             self.cnn = cnn
             raise NotImplementedError
         self.conv1x1 = nn.Conv2d(in_dims_0, h_dims, kernel_size=(1, 1))
+        self.norm = nn.BatchNorm2d(h_dims)
         self.fix = fix
 
     def forward(self, glimpse_kxk):
         batch_size = glimpse_kxk.shape[0]
         if self.fix:
             with T.no_grad():
-                fm = self.conv1x1(self.cnn(glimpse_kxk))
+                fm = self.norm(self.conv1x1(self.cnn(glimpse_kxk)))
         else:
-            fm = self.conv1x1(self.cnn(glimpse_kxk))
+            fm = self.norm(self.conv1x1(self.cnn(glimpse_kxk)))
         return fm
 
 
@@ -402,7 +403,7 @@ class AlphaChannelReadoutModule(nn.Module):
     Only works when using inverse glimpse (i.e. have fm and alpha channels)
     '''
     def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
-        super(ReadoutModule, self).__init__()
+        super(AlphaChannelReadoutModule, self).__init__()
         self.predictor = nn.ModuleList(
                 nn.Sequential(
                     nn.Linear(h_dims, h_dims),
@@ -412,25 +413,26 @@ class AlphaChannelReadoutModule(nn.Module):
             )
         self.n_branches = n_branches
         self.n_levels = n_levels
-        self.avgpool = nn.AdaptiveMaxPool2d(1)
+        self.maxpool = nn.AdaptiveMaxPool2d(1)
 
     def forward(self, t, lvls=None):
         if lvls is None:
             lvls = self.n_levels
         results = []
         hs = []
-        accum_fm = 0
+        fm_accum = 0
         for lvl in range(lvls + 1):
             nodes = t[num_nodes(lvl - 1, self.n_branches): num_nodes(lvl, self.n_branches)]
             random.shuffle(nodes)
             for node in nodes:
                 fm, alpha = node.h
-                accum_fm = accum_fm * (1 - alpha) + fm * alpha
-            h = self.avgpool(accum_fm)
-            h = h.view(h.shape[0], -1)
+                fm_accum = fm_accum * (1 - alpha) + fm * alpha
+            batch_size = fm_accum.shape[0]
+            h_accum = self.maxpool(fm_accum).view(batch_size, -1)
+            h = h_accum
             results.append(self.predictor[lvl](h))
             hs.append(h)
-            accum_fm.detach_()
+            fm_accum.detach_()
 
         self.hs = hs
         return results
@@ -441,7 +443,7 @@ class NodewiseMaxPoolingReadoutModule(nn.Module):
     Only works when h is a hidden state tensor
     '''
     def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
-        super(ReadoutModule, self).__init__()
+        super(NodewiseMaxPoolingReadoutModule, self).__init__()
         self.predictor = nn.ModuleList(
                 nn.Sequential(
                     nn.Linear(h_dims, h_dims),

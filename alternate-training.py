@@ -138,7 +138,7 @@ else:
                             what__cnn=cnn,
                             what__fix=args.fix,
                             what__in_dims=in_dims)))
-    readout = cuda(nn.DataParallel(ReadoutModule(n_branches=n_branches, n_levels=n_levels, n_classes=n_classes)))
+    readout = cuda(nn.DataParallel(AlphaChannelReadoutModule(n_branches=n_branches, n_levels=n_levels, n_classes=n_classes)))
 
 train_shuffle = True
 
