@@ -131,7 +131,6 @@ else:
         ResRegularizer: args.res_coef
     }
     network_params = NETWORK_PARAMS[args.dataset]
-    print(network_params)
     builder = cuda(nn.DataParallel(TreeBuilder(n_branches=n_branches,
                             n_levels=n_levels,
                             n_classes=n_classes,
@@ -227,6 +226,7 @@ def train():
     n_train_batches = len(train_loader)
 
     params = list(builder.parameters()) + list(readout.parameters())
+    """
     if args.dataset.startswith('mnist'):
         lr = 1e-4
         opt = T.optim.RMSprop(params, lr=1e-4)
@@ -241,6 +241,21 @@ def train():
         lr = 1e-4
         #opt = T.optim.SGD(params, lr=0.1, momentum=0.9, weight_decay=5e-5)
         opt = T.optim.RMSprop(params, lr=1e-4)
+    """
+
+    opt_params = OPTIM_PARAMS[args.dataset]
+    opt = create_optim(
+        opt_params['mode'],
+        params,
+        opt_params['args']
+    )
+
+    scheduler = create_scheduler(
+        opt_params['scheduler_mode'],
+        opt,
+        opt_params['scheduler_args']
+    )
+    print('initial lr is {}'.format(opt.param_groups[0]['lr']))
 
     for epoch in range(n_epochs):
         print("Epoch {} starts...".format(epoch))
@@ -510,6 +525,8 @@ def train():
                 for lvl in range(levels + 1):
                     print("Levelwise accuracy on level {}: {}".format(lvl, levelwise_acc[lvl]))
                 break
+        print('learning rate is {}'.format(opt.param_groups[0]['lr']))
+        scheduler.step()
 
 if __name__ == '__main__':
     train()
