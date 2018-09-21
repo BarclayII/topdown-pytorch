@@ -8,6 +8,7 @@ import torchvision.models
 import numpy as np
 from glimpse import create_glimpse
 from util import cuda, area, intersection, list_index_select
+from abc import abstractclassmethod
 from transform import *
 import itertools
 import random
@@ -289,16 +290,15 @@ class TreeBuilder(nn.Module):
                      CCRegularizer: 0,
                      ResRegularizer: 0,
                      },
+                 fm_target_size=(15, 15),
+                 final_n_channels=256,
                  what__cnn=None,
                  what__fix=False,
                  what__in_dims=None,
                  ):
         super(TreeBuilder, self).__init__()
 
-        fm_target_size = (15, 15) #(16, 16)
         fm_glim_size = final_pool_size
-        final_n_channels = 256
-
         glimpse = create_glimpse(glimpse_type, glimpse_size, explore=explore, bind=bind)
         glimpse_fm = create_glimpse(glimpse_type, fm_glim_size)
         g_dims = glimpse.att_params
@@ -398,13 +398,20 @@ class TreeBuilder(nn.Module):
 
         return t, regularizer_losses
 
-class AlphaChannelReadoutModule(nn.Module):
+class ReadoutModule(nn.Module):
+    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1):
+        super(ReadoutModule, self).__init__()
+
+    @abstractclassmethod
+    def forward(self, t, lvls=None):
+        raise NotImplementedError
+
+class AlphaChannelReadoutModule(ReadoutModule):
     '''
     Only works when using inverse glimpse (i.e. have fm and alpha channels)
     '''
-    def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
+    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1):
         super(AlphaChannelReadoutModule, self).__init__()
-        final_n_channels = 256
         pool_size = (1, 1)
         self.predictor = nn.ModuleList(
                 nn.Sequential(
@@ -440,11 +447,11 @@ class AlphaChannelReadoutModule(nn.Module):
         return results
 
 
-class NodewiseMaxPoolingReadoutModule(nn.Module):
+class NodewiseMaxPoolingReadoutModule(ReadoutModule):
     '''
     Only works when h is a hidden state tensor
     '''
-    def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
+    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1):
         super(NodewiseMaxPoolingReadoutModule, self).__init__()
         self.predictor = nn.ModuleList(
                 nn.Sequential(
@@ -457,6 +464,9 @@ class NodewiseMaxPoolingReadoutModule(nn.Module):
         self.n_levels = n_levels
 
     def forward(self, t, lvls=None):
+        """
+        TODO: check whether `detach` is required here.
+        """
         if lvls is None:
             lvls = self.n_levels
 
@@ -473,6 +483,19 @@ class NodewiseMaxPoolingReadoutModule(nn.Module):
         self.hs = hs
         return results
 
+def create_readout(mode, **kwargs):
+    if mode == 'alpha':
+        return AlphaChannelReadoutModule(**kwargs)
+    elif mode == 'max':
+        return NodewiseMaxPoolingReadoutModule(**kwargs)
+    elif mode == 'unlinear':
+        # TODO
+        raise NotImplementedError
+    elif mode == 'mp': # Message Passing
+        # TODO
+        raise NotImplementedError
+    else: # unexpected mode
+        raise KeyError('cannot find corresponding readout module')
 
 """
 class MultiscaleGlimpse(nn.Module):

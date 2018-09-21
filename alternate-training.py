@@ -24,6 +24,7 @@ from viz import fig_to_ndarray_tb
 from tensorboardX import SummaryWriter
 from stats import *
 from modules import *
+from configs import *
 import tqdm
 
 T.set_num_threads(4)
@@ -129,16 +130,22 @@ else:
         CCRegularizer: args.cc_coef,
         ResRegularizer: args.res_coef
     }
+    network_params = NETWORK_PARAMS[args.dataset]
+    print(network_params)
     builder = cuda(nn.DataParallel(TreeBuilder(n_branches=n_branches,
                             n_levels=n_levels,
                             n_classes=n_classes,
                             regularizer_classes=regularizer_classes,
                             glimpse_type=args.glm_type,
                             glimpse_size=(args.glm_size, args.glm_size),
+                            fm_target_size=network_params['fm_target_size'],
+                            final_pool_size=network_params['final_pool_size'],
+                            final_n_channels=network_params['final_n_channels'],
                             what__cnn=cnn,
                             what__fix=args.fix,
                             what__in_dims=in_dims)))
-    readout = cuda(nn.DataParallel(AlphaChannelReadoutModule(n_branches=n_branches, n_levels=n_levels, n_classes=n_classes)))
+    readout = cuda(nn.DataParallel(
+        create_readout('alpha', final_n_channels=network_params['final_n_channels'], n_branches=n_branches, n_levels=n_levels, n_classes=n_classes)))
 
 train_shuffle = True
 
