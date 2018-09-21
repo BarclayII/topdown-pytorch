@@ -109,10 +109,10 @@ class WhatModule(nn.Module):
                 kernel_size=kernel_size,
                 final_pool_size=final_pool_size
             )
-            in_dims_0 = filters[-1]
+            in_dims = filters[-1]
         elif isinstance(cnn, str) and cnn.startswith('resnet'):
             cnn = getattr(torchvision.models, cnn)(pretrained=True)
-            in_dims_0 = cnn.fc.in_features
+            in_dims = cnn.fc.in_features
             self.cnn = nn.Sequential(
                     cnn.conv1,
                     cnn.bn1,
@@ -127,17 +127,16 @@ class WhatModule(nn.Module):
         else:
             self.cnn = cnn
             raise NotImplementedError
-        self.conv1x1 = nn.Conv2d(in_dims_0, h_dims, kernel_size=(1, 1))
-        self.norm = nn.BatchNorm2d(h_dims)
+        self.norm = nn.BatchNorm2d(in_dims)
         self.fix = fix
 
     def forward(self, glimpse_kxk):
         batch_size = glimpse_kxk.shape[0]
         if self.fix:
             with T.no_grad():
-                fm = self.norm(self.conv1x1(self.cnn(glimpse_kxk)))
+                fm = self.norm(self.cnn(glimpse_kxk))
         else:
-            fm = self.norm(self.conv1x1(self.cnn(glimpse_kxk)))
+            fm = self.norm(self.cnn(glimpse_kxk))
         return fm
 
 
@@ -276,7 +275,7 @@ class TreeBuilder(nn.Module):
                  what_filters=[16, 32, 64, 128, 256],
                  where_filters=[16, 32],
                  kernel_size=(3, 3),
-                 final_pool_size=(2, 2),
+                 final_pool_size=(3, 3),
                  h_dims=128,
                  a_dims=50,
                  n_classes=10,
@@ -296,8 +295,9 @@ class TreeBuilder(nn.Module):
                  ):
         super(TreeBuilder, self).__init__()
 
-        fm_target_size = (10, 10) #(16, 16)
+        fm_target_size = (15, 15) #(16, 16)
         fm_glim_size = final_pool_size
+        final_n_channels = 256
 
         glimpse = create_glimpse(glimpse_type, glimpse_size, explore=explore, bind=bind)
         glimpse_fm = create_glimpse(glimpse_type, fm_glim_size)
@@ -313,7 +313,7 @@ class TreeBuilder(nn.Module):
         net_h = InverseGlimpse(glimpse_fm, fm_target_size)
         upd_b = GlimpseUpdater(
                 glimpse,
-                h_dims * np.prod(final_pool_size),
+                final_n_channels * np.prod(final_pool_size),
                 h_dims,
                 g_dims,
                 n_branches,
@@ -404,16 +404,18 @@ class AlphaChannelReadoutModule(nn.Module):
     '''
     def __init__(self, h_dims=128, g_dims=6, n_classes=10, n_branches=1, n_levels=1):
         super(AlphaChannelReadoutModule, self).__init__()
+        final_n_channels = 256
+        pool_size = (1, 1)
         self.predictor = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(h_dims, h_dims),
+                    nn.Linear(np.prod(pool_size) * final_n_channels, h_dims),
                     nn.ReLU(),
                     nn.Linear(h_dims, n_classes)
                 ) for _ in range(n_levels + 1)
             )
         self.n_branches = n_branches
         self.n_levels = n_levels
-        self.maxpool = nn.AdaptiveMaxPool2d(1)
+        self.maxpool = nn.AdaptiveMaxPool2d(pool_size)
 
     def forward(self, t, lvls=None):
         if lvls is None:
