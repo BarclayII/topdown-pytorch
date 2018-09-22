@@ -221,10 +221,7 @@ def train():
             for i, item in enumerate(tqdm.tqdm(valid_loader)):
                 x, y, b = preprocessor(item)
                 print(x.shape, y.shape, file=logfile)
-                if args.dataset in dataset_with_normalize:
-                    x_in = imagenet_normalize(x)
-                else:
-                    x_in = x
+                x_in = normalize(x)
 
                 total_loss = 0
                 t, _ = builder(x_in, levels)
