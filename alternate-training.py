@@ -17,6 +17,7 @@ import numpy as np
 import os
 import sys
 from glimpse import create_glimpse
+import util
 from util import cuda
 from datasets import get_generator
 from viz import *
@@ -58,7 +59,11 @@ else:
                             what__fix=args.fix,
                             what__in_dims=network_params['in_dims'])))
     readout = cuda(nn.DataParallel(
-        create_readout('alpha', final_n_channels=network_params['final_n_channels'], n_branches=n_branches, n_levels=n_levels, n_classes=n_classes)))
+        create_readout('alpha',
+                       final_n_channels=network_params['final_n_channels'],
+                       n_branches=n_branches,
+                       n_levels=n_levels,
+                       n_classes=network_params['n_classes'])))
 
 train_shuffle = True
 
@@ -69,9 +74,8 @@ loss_arr = []
 acc_arr = []
 
 logfile = open('debug.log', 'w')
-dataset_with_sgd_schedule = ['cifar10', 'dogs']
-normalize = network_params['normalize']
-normalize_reverse = network_params['normalize_reverse']
+normalize = getattr(util, network_params['normalize'])
+normalize_inverse = getattr(util, network_params['normalize_inverse'])
 
 #@profile
 def train():
@@ -314,22 +318,6 @@ def train():
             T.save(builder.state_dict(), 'checkpoints/{}_builder_best.pt'.format(expr_setting))
             T.save(readout.state_dict(), 'checkpoints/{}_readout_best.pt'.format(expr_setting))
             best_epoch[lvl_turn] = epoch
-        elif best_epoch[lvl_turn] <= epoch - 20 and lr > 1e-4 and args.dataset in dataset_with_sgd_schedule:
-            # TODO
-            raise NotImplementedError
-            """
-            best_epoch[-1] = epoch
-            if levels < 2:
-                print('Increasing level...')
-                levels += 1
-            else:
-                print('Shrinking learning rate...')
-                lr /= 10
-                for pg in opt.param_groups:
-                    pg['lr'] = lr
-            builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
-            readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
-            """
         elif (best_epoch[lvl_turn] <= epoch - 5 or epoch == n_epochs - 1) and test_loader is not None:
             print('Early Stopping on level {}...'.format(lvl_turn))
             coef_lvl[lvl_turn] = 0

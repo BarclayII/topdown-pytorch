@@ -15,7 +15,7 @@ class ImageNetSingle(Dataset):
                  batch_size=32,
                  batches_per_page=4,
                  bbox_shrink_ratio=0.05,
-                 allowed_size=640):
+                 allowed_size=400):
         self.rootdir = rootdir
         with open(selection, 'rb') as f:
             self.selection = pickle.load(f)
@@ -44,10 +44,10 @@ class ImageNetSingle(Dataset):
         imgpath = os.path.join(self.rootdir, record['imgpath'])
         _img = Image.open(imgpath)
         if self.target_aspect[i] < 1:
-            height = 400
+            height = self.allowed_size
             width = int(height * self.target_aspect[i])
         else:
-            width = 400
+            width = self.allowed_size
             height = int(width / self.target_aspect[i])
 
         _img = _img.convert('RGB').resize((width, height), Image.BILINEAR)

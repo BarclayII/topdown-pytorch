@@ -1,6 +1,5 @@
 from .args import args
 import torch.nn as nn
-from ..util import imagenet_normalize, imagenet_normalize_inverse
 
 def _cifar10_cnn():
     from pytorch_cifar.models import ResNet18
@@ -19,10 +18,6 @@ def _cifar10_cnn():
     return cnn
 
 
-def _identity(x):
-    return x
-
-
 NETWORK_PARAMS = {
     'mnistcluttered': {
         'fm_target_size': (15, 15),
@@ -31,8 +26,8 @@ NETWORK_PARAMS = {
         'n_classes': 10 ** args.n_digits,
         'cnn': None,
         'in_dims': None,
-        'normalize': _identity,
-        'normalize_inverse': _identity,
+        'normalize': 'identity',
+        'normalize_inverse': 'identity',
     },
     'mnistmulti': {
         'fm_target_size': (15, 15),
@@ -41,8 +36,8 @@ NETWORK_PARAMS = {
         'n_classes': 10 ** args.n_digits,
         'cnn': None,
         'in_dims': None,
-        'normalize': _identity,
-        'normalize_inverse': _identity,
+        'normalize': 'identity',
+        'normalize_inverse': 'identity',
     },
     'bird': {
         'fm_target_size': (15, 15),
@@ -51,8 +46,8 @@ NETWORK_PARAMS = {
         'n_classes': 200,
         'cnn': 'resnet50',
         'in_dims': None,
-        'normalize': imagenet_normalize,
-        'normalize_inverse': imagenet_normalize_inverse,
+        'normalize': 'imagenet_normalize',
+        'normalize_inverse': 'imagenet_normalize_inverse',
     },
     'imagenet': {
         'fm_target_size': (15, 15),
@@ -61,8 +56,8 @@ NETWORK_PARAMS = {
         'n_classes': 1000,
         'cnn': 'resnet18',
         'in_dims': None,
-        'normalize': imagenet_normalize,
-        'normalize_inverse': imagenet_normalize_inverse,
+        'normalize': 'imagenet_normalize',
+        'normalize_inverse': 'imagenet_normalize_inverse',
     },
     'dogs': {
         'fm_target_size': (15, 15),
@@ -71,8 +66,8 @@ NETWORK_PARAMS = {
         'n_classes': 120,
         'cnn': 'resnet50',
         'in_dims': None,
-        'normalize': imagenet_normalize,
-        'normalize_inverse': imagenet_normalize_inverse,
+        'normalize': 'imagenet_normalize',
+        'normalize_inverse': 'imagenet_normalize_inverse',
     },
     'cifar10': {
         'fm_target_size': (15, 15),
@@ -81,8 +76,8 @@ NETWORK_PARAMS = {
         'n_classes': 10,
         'cnn': _cifar10_cnn,
         'in_dims': None,
-        'normalize': imagenet_normalize,
-        'normalize_inverse': imagenet_normalize_inverse,
+        'normalize': 'imagenet_normalize',
+        'normalize_inverse': 'imagenet_normalize_inverse',
     },
     'flower': {
         'fm_target_size': (15, 15),
@@ -91,7 +86,7 @@ NETWORK_PARAMS = {
         'n_classes': 102,
         'cnn': 'resnet18',
         'in_dims': None,
-        'normalize': imagenet_normalize,
-        'normalize_inverse': imagenet_normalize_inverse,
+        'normalize': 'imagenet_normalize',
+        'normalize_inverse': 'imagenet_normalize_inverse',
     },
 }

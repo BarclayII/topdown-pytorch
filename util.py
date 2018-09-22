@@ -117,3 +117,6 @@ def imagenet_normalize(x):
     std = T.FloatTensor([0.229, 0.224, 0.225]).to(x)
     x = (x - mean[None, :, None, None]) / std[None, :, None, None]
     return x
+
+def identity(x):
+    return x

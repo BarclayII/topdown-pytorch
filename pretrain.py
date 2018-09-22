@@ -2,34 +2,28 @@ import torch as T
 import torch.nn.functional as F
 from torchvision.datasets import MNIST, CIFAR10
 from torchvision.transforms import Compose, ToTensor, Normalize, RandomCrop, RandomHorizontalFlip
-from datasets import MNISTMulti, SubsetSampler
-from modules import WhatModule, MultiscaleGlimpse
-from pytorch_cifar.models import ResNet18
+from datasets import get_generator
+from modules import WhatModule
+from glimpse import GaussianGlimpse, BilinearGlimpse
+import pytorch_cifar.models
+import torchvision.models
 from util import USE_CUDA, cuda
 import numpy as np
 import argparse
 import tqdm
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--cnn', default='custom', help='(custom, miniresnet20)')
+parser.add_argument('--cnn', default='custom', help='(custom, ...)')
 parser.add_argument('--dataset', default='cifar10', help='(cifar10, mnist)')
+parser.add_argument('--batch_size', default=8, help='(cifar10, mnist)', type=int)
+parser.add_argument('--v_batch_size', default=8, help='(cifar10, mnist)', type=int)
+parser.add_argument('--imagenet_train_sel', default='selected-train.pkl', type=str)
+parser.add_argument('--imagenet_valid_sel', default='selected-val.pkl', type=str)
+parser.add_argument('--num_workers', default=0, type=int)
+parser.add_argument('--imagenet_root', default='/beegfs/qg323', type=str)
 args = parser.parse_args()
 
-if args.dataset == 'mnist':
-    train_dataset = valid_dataset = MNIST('.', download=True, transform=ToTensor())
-elif args.dataset == 'cifar10':
-    transform_train = Compose([
-        RandomCrop(32, padding=4),
-        RandomHorizontalFlip(),
-        ToTensor(),
-        Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
-    transform_test = Compose([
-        ToTensor(),
-        Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
-    train_dataset = CIFAR10(root='.', download=True, transform=transform_train)
-    valid_dataset = CIFAR10(root='.', download=True, transform=transform_test)
+train_dataloader, valid_dataloader, test_dataloader, preprocessor = get_generator(args)
 
 #mnist = MNISTMulti('.', n_digits=1, backrand=0, image_rows=200, image_cols=200, download=True)
 
@@ -51,13 +45,14 @@ if args.cnn == 'custom':
             cnn,
             )
     #module = cnn
-elif args.cnn == 'miniresnet20':
+else:
     #cnn = miniresnet20(num_classes=10)
-    cnn = ResNet18()
-    module = T.nn.Sequential(
-            #MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(15, 15), n_glimpses=n_glimpses),
+    #cnn = getattr(pytorch_cifar.models, args.cnn)(1000)
+    cnn = getattr(torchvision.models, args.cnn)(pretrained=True)
+    module = T.nn.DataParallel(T.nn.Sequential(
+            #MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(50, 50), n_glimpses=n_glimpses),
             cnn,
-            )
+            ))
 
 module = cuda(module)
 #module.load_state_dict(T.load('cnn.pt'))
@@ -94,15 +89,10 @@ net = skorch.NeuralNetClassifier(
 #net.fit(train_data, train_labels, epochs=100)
 
 #opt = T.optim.Adam(module.parameters(), weight_decay=1e-4)
-if args.dataset == 'mnist':
-    train_dataloader = T.utils.data.DataLoader(train_dataset, batch_size=32, sampler=T.utils.data.sampler.SubsetRandomSampler(range(50000)), drop_last=True)
-    valid_dataloader = T.utils.data.DataLoader(valid_dataset, batch_size=100, sampler=SubsetSampler(range(50000, 60000)))
-elif args.dataset == 'cifar10':
-    train_dataloader = T.utils.data.DataLoader(train_dataset, batch_size=128, sampler=T.utils.data.sampler.SubsetRandomSampler(range(45000)), drop_last=True)
-    valid_dataloader = T.utils.data.DataLoader(valid_dataset, batch_size=100, sampler=SubsetSampler(range(45000, 50000)))
+
+g = cuda(T.nn.DataParallel(GaussianGlimpse((50, 50))))
 
 lr = 0.1
-opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
 #opt = T.optim.Adam(module.parameters(), weight_decay=5e-4)
 
 best_acc = 0
@@ -110,15 +100,22 @@ best_valid_loss = 1e6
 best_epoch = 0
 n_iter = 0
 for epoch in range(200):
+    if epoch == 0:
+        opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=1e-5)
+    #elif epoch == 1:
+    #    opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=0)
     correct = 0
     total = 0
     avg_loss = 0
     batches = 0
     with tqdm.tqdm(train_dataloader) as t:
-        for _x, _y in t:
+        for item in t:
+            x, y, b = preprocessor(item)
+            #g1 = cuda(T.nn.DataParallel(BilinearGlimpse((x.shape[2], x.shape[3]))))
+            #b = g.module.full()[None, None, :].expand(args.batch_size, 1, 6)
+            #b1 = g1.module.full()[None, None, :].expand(args.batch_size, 1, 4)
+            #x = g1(g(x, b)[:, 0], b1)[:, 0]
             n_iter += 1
-            x = cuda(_x)
-            y = cuda(_y)
             opt.zero_grad()
             if x.shape[1] == 1:
                 x = x.repeat(1, 3, 1, 1)
@@ -138,9 +135,12 @@ for epoch in range(200):
     batches = 0
     with tqdm.tqdm(valid_dataloader) as t:
         with T.no_grad():
-            for _x, _y in t:
-                x = cuda(_x)
-                y = cuda(_y)
+            for item in t:
+                x, y, b = preprocessor(item)
+                #g1 = cuda(T.nn.DataParallel(BilinearGlimpse((x.shape[2], x.shape[3]))))
+                #b = g.module.full()[None, None, :].expand(args.batch_size, 1, 6)
+                #b1 = g1.module.full()[None, None, :].expand(args.batch_size, 1, 4)
+                #x = g1(g(x, b)[:, 0], b1)[:, 0]
                 if x.shape[1] == 1:
                     x = x.repeat(1, 3, 1, 1)
                 pred = module(x)

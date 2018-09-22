@@ -37,7 +37,20 @@ OPTIM_PARAMS = {
             'step_size': 10,
             'gamma': 0.94
         }
-    }
+    },
+    'dogs': {
+        'mode': 'sgd',
+        'args': {
+            'lr': 0.01,
+            'weight_decay': 5e-5,
+            'momentum': 0.9,
+        },
+        'scheduler_mode': 'steplr',
+        'scheduler_args': {
+            'step_size': 10,
+            'gamma': 0.94
+        }
+    },
 }
 
 def create_optim(mode, params, args_dict):
