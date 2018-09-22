@@ -125,8 +125,9 @@ class WhatModule(nn.Module):
                     cnn.layer4,
                     nn.AdaptiveMaxPool2d(final_pool_size)
             )
+        elif callable(cnn):
+            self.cnn = cnn()
         else:
-            self.cnn = cnn
             raise NotImplementedError
         self.norm = nn.BatchNorm2d(in_dims)
         self.fix = fix

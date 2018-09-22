@@ -104,3 +104,16 @@ def list_index_select(x, index):
     if T.is_tensor(x):
         return x[index]
     return [_x[index] for _x in x]
+
+
+def imagenet_normalize_inverse(x):
+    mean = T.FloatTensor([0.485, 0.456, 0.406]).to(x)
+    std = T.FloatTensor([0.229, 0.224, 0.225]).to(x)
+    x = x * std[None, :, None, None] + mean[None, :, None, None]
+    return x
+
+def imagenet_normalize(x):
+    mean = T.FloatTensor([0.485, 0.456, 0.406]).to(x)
+    std = T.FloatTensor([0.229, 0.224, 0.225]).to(x)
+    x = (x - mean[None, :, None, None]) / std[None, :, None, None]
+    return x

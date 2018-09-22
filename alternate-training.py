@@ -14,13 +14,12 @@ import torch.nn.init as INIT
 import torch.optim as optim
 from torchvision.models import resnet18
 import numpy as np
-import argparse
 import os
 import sys
 from glimpse import create_glimpse
 from util import cuda
 from datasets import get_generator
-from viz import fig_to_ndarray_tb
+from viz import *
 from tensorboardX import SummaryWriter
 from stats import *
 from modules import *
@@ -29,97 +28,12 @@ import tqdm
 
 T.set_num_threads(4)
 
-parser = argparse.ArgumentParser(description='Alternative')
-parser.add_argument('--resume', default=None, help='resume training from checkpoint')
-parser.add_argument('--row', default=200, type=int, help='image rows')
-parser.add_argument('--col', default=200, type=int, help='image cols')
-parser.add_argument('--n', default=100, type=int, help='number of epochs')
-parser.add_argument('--batch_size', default=32, type=int, help='batch size')
-parser.add_argument('--log_interval', default=10, type=int, help='log interval')
-parser.add_argument('--share', action='store_true', help='indicates whether to share CNN params or not')
-parser.add_argument('--pretrain', action='store_true', help='pretrain or not pretrain')
-parser.add_argument('--schedule', action='store_true', help='indicates whether to use schedule training or not')
-parser.add_argument('--nearest', action='store_true', help='indicates whether to visualize nearest neighbors or not')
-# PC coef is not necessary when using relative position. The coefficient is set to 0 by default.
-parser.add_argument('--pc_coef', default=0, type=float, help='regularization parameter(parent-child)')
-parser.add_argument('--cc_coef', default=0, type=float, help='regularization parameter(child-child)')
-parser.add_argument('--res_coef', default=1, type=float, help='coefficient for resolution loss')
-parser.add_argument('--branches', default=2, type=int, help='branches')
-parser.add_argument('--levels', default=2, type=int, help='levels')
-parser.add_argument('--levels_from', default=2, type=int, help='levels from')
-parser.add_argument('--backrand', default=0, type=int, help='background noise(randint between 0 to `backrand`)')
-parser.add_argument('--glm_type', default='gaussian', type=str, help='glimpse type (gaussian, bilinear)')
-parser.add_argument('--dataset', default='mnistmulti', type=str, help='dataset (mnistmulti, mnistcluttered, cifar10, imagenet, flower, bird)')
-parser.add_argument('--n_digits', default=1, type=int, help='indicate number of digits in multimnist dataset')
-parser.add_argument('--v_batch_size', default=32, type=int, help='valid batch size')
-parser.add_argument('--size_min', default=28 // 3 * 2, type=int, help='Object minimum size')
-parser.add_argument('--size_max', default=28, type=int, help='Object maximum size')
-parser.add_argument('--imagenet_root', default='/beegfs/qg323', type=str)
-parser.add_argument('--imagenet_train_sel', default='selected-train.pkl', type=str)
-parser.add_argument('--imagenet_valid_sel', default='selected-val.pkl', type=str)
-parser.add_argument('--glm_size', default=12, type=int)
-parser.add_argument('--explore', action='store_true', help='indicates whether to enable explore or not')
-parser.add_argument('--bind', action='store_true', help='indicates whether to bind dx/sx, dy/sy or not')
-parser.add_argument('--num_workers', default=0, type=int)
-parser.add_argument('--n_gpus', default=1, type=int)
-parser.add_argument('--fix', action='store_true')
-args = parser.parse_args()
-filter_arg_dict = [
-        'resume',
-        'v_batch_size',
-        'batch_size',
-        'n',
-        'log_interval',
-        'imagenet_root',
-        'imagenet_train_sel',
-        'imagenet_valid_sel',
-        'num_workers',
-        'n_gpus',
-]
-expr_setting = '_'.join('{}'.format(v) for k, v in vars(args).items() if not k in filter_arg_dict)
-
 train_loader, valid_loader, test_loader, preprocessor = get_generator(args)
 
 writer = SummaryWriter('runs/{}'.format(expr_setting))
 
 n_branches = args.branches
 n_levels = args.levels
-if args.dataset == 'imagenet':
-    n_classes = 1000
-    cnn = 'resnet18'
-    in_dims = None
-elif args.dataset == 'dogs':
-    n_classes = 120
-    cnn = 'resnet50'
-    in_dims = None
-elif args.dataset == 'cifar10':
-    n_classes = 10
-    from pytorch_cifar.models import ResNet18
-    cnn = ResNet18()
-    cnn.load_state_dict(T.load('cnntest.pt'))
-    cnn = nn.Sequential(
-            cnn.conv1,
-            cnn.bn1,
-            nn.ReLU(),
-            cnn.layer1,
-            cnn.layer2,
-            cnn.layer3,
-            cnn.layer4,
-            nn.AdaptiveAvgPool2d(1),
-            )
-    in_dims = 512
-elif args.dataset.startswith('mnist'):
-    n_classes = 10 ** args.n_digits
-    cnn = None
-    in_dims = None
-elif args.dataset == 'flower':
-    n_classes = 102
-    cnn = 'resnet18'
-    in_dims = None
-elif args.dataset == 'bird':
-    n_classes = 200
-    cnn = 'resnet50'
-    in_dims = None
 
 if args.resume is not None:
     builder = T.load('checkpoints/{}_builder_{}.pt'.format(expr_setting, args.resume))
@@ -133,16 +47,16 @@ else:
     network_params = NETWORK_PARAMS[args.dataset]
     builder = cuda(nn.DataParallel(TreeBuilder(n_branches=n_branches,
                             n_levels=n_levels,
-                            n_classes=n_classes,
+                            n_classes=network_params['n_classes'],
                             regularizer_classes=regularizer_classes,
                             glimpse_type=args.glm_type,
                             glimpse_size=(args.glm_size, args.glm_size),
                             fm_target_size=network_params['fm_target_size'],
                             final_pool_size=network_params['final_pool_size'],
                             final_n_channels=network_params['final_n_channels'],
-                            what__cnn=cnn,
+                            what__cnn=network_params['cnn'],
                             what__fix=args.fix,
-                            what__in_dims=in_dims)))
+                            what__in_dims=network_params['in_dims'])))
     readout = cuda(nn.DataParallel(
         create_readout('alpha', final_n_channels=network_params['final_n_channels'], n_branches=n_branches, n_levels=n_levels, n_classes=n_classes)))
 
@@ -154,67 +68,10 @@ batch_size = args.batch_size
 loss_arr = []
 acc_arr = []
 
-def imagenet_normalize_inverse(x):
-    mean = T.FloatTensor([0.485, 0.456, 0.406]).to(x)
-    std = T.FloatTensor([0.229, 0.224, 0.225]).to(x)
-    x = x * std[None, :, None, None] + mean[None, :, None, None]
-    return x
-
-def imagenet_normalize(x):
-    mean = T.FloatTensor([0.485, 0.456, 0.406]).to(x)
-    std = T.FloatTensor([0.229, 0.224, 0.225]).to(x)
-    x = (x - mean[None, :, None, None]) / std[None, :, None, None]
-    return x
-
-
-available_clrs = ['y', 'r', 'g', 'b']
-
-def getclrs(n_branches, n_levels):
-    clrs = []
-    for j in range(n_levels):
-        clrs += [available_clrs[j]] * (n_branches ** (j + 1))
-
-    return clrs
-
-
-def viz(epoch, imgs, bboxes, g_arr, tag, n_branches=2, n_levels=2):
-    length = len(g_arr)
-    statplot = StatPlot(5, 2)
-    statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
-
-    clrs = getclrs(n_branches, n_levels)
-    for j in range(10):
-        statplot.add_image(
-            imgs[j].permute(1, 2, 0),
-            bboxs=[bbox[j] for bbox in bboxes],
-            clrs=clrs, #['y', 'y', 'r', 'r', 'r', 'r'],
-            lws=[5] * length #att[j, 1:] * length
-        )
-        for k in range(length):
-            # TODO titled with accuracy
-            statplot_g_arr[k].add_image(g_arr[k][j].permute(1, 2, 0))
-
-    statplot_disp_g = StatPlot(5, 2)
-    channel, row, col = imgs[-1].shape
-    for j in range(10):
-        bbox_list = [
-            np.array([0, 0, col, row])
-        ] + [
-            bbox_batch[j] for bbox_batch in bboxes
-        ]
-        glim_list = [
-            g_arr[k][j].permute(1, 2, 0) for k in range(length)]
-        statplot_disp_g.add_image(
-            display_glimpse(channel, row, col, bbox_list, glim_list))
-    writer.add_image('Image/{}/disp_glim'.format(tag), fig_to_ndarray_tb(statplot_disp_g.fig), epoch)
-    writer.add_image('Image/{}/viz_bbox'.format(tag), fig_to_ndarray_tb(statplot.fig), epoch)
-    for k in range(length):
-        writer.add_image('Image/{}/viz_glim_{}'.format(tag, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
-    plt.close('all')
-
 logfile = open('debug.log', 'w')
 dataset_with_sgd_schedule = ['cifar10', 'dogs']
-dataset_with_normalize = ['cifar10', 'imagenet', 'flower', 'bird', 'dogs']
+normalize = network_params['normalize']
+normalize_reverse = network_params['normalize_reverse']
 
 #@profile
 def train():
@@ -282,10 +139,7 @@ def train():
                 x, y, b = preprocessor(item)
                 print(x.shape, y.shape, file=logfile)
 
-                if args.dataset in dataset_with_normalize:
-                    x_in = imagenet_normalize(x)
-                else:
-                    x_in = x
+                x_in = normalize(x)
 
                 total_loss = 0
 
@@ -329,11 +183,10 @@ def train():
                             glimpse_to_xyhw(t[k].b[:10, :4].detach()) * bbox_scaler
                             for k in range(1, length)
                             ]
-                    normalize_inverse = lambda x: \
-                        imagenet_normalize_inverse(x) if args.dataset in dataset_with_normalize else x
                     sample_g_arr = [
                         normalize_inverse(t[_].g[:10].detach()) for _ in range(length)]
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, 'train', n_branches=n_branches, n_levels=n_levels)
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, 'train', writer,
+                            n_branches=n_branches, n_levels=n_levels)
 
                 tq.set_postfix({
                     'train_loss': total_loss.item(),
@@ -395,12 +248,11 @@ def train():
                             glimpse_to_xyhw(t[k].b[:10, :4].detach()) * bbox_scaler
                             for k in range(1, length)
                             ]
-                    normalize_inverse = lambda x: \
-                        imagenet_normalize_inverse(x) if args.dataset in dataset_with_normalize else x
                     sample_g_arr = [
                         normalize_inverse(t[_].g[:10]) for _ in range(length)]
 
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, 'valid', n_branches=n_branches, n_levels=levels)
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, 'valid', writer,
+                            n_branches=n_branches, n_levels=levels)
 
                     if args.nearest:
                         # nearest neighbor construction
@@ -417,10 +269,7 @@ def train():
                         for j, item_train in tqdm.tqdm(enumerate(train_loader)):
                             x, y, b = preprocessor(item_train)
                             print(x.shape, y.shape, file=logfile)
-                            if args.dataset in dataset_with_normalize:
-                                x_in = imagenet_normalize(x)
-                            else:
-                                x_in = x
+                            x_in = normalize(x)
 
                             t, _ = builder(x_in, levels)
                             readout_list = readout(t, levels)
@@ -495,10 +344,7 @@ def train():
                 with T.no_grad():
                     for i, item in enumerate(tqdm.tqdm(test_loader)):
                         x, y, b = preprocessor(item)
-                        if args.dataset in dataset_with_normalize:
-                            x_in = imagenet_normalize(x)
-                        else:
-                            x_in = x
+                        x_in = normalize(x)
 
                         total_loss = 0
                         t, _ = builder(x_in, levels)

@@ -1,9 +1,7 @@
-
-import visdom
-import matplotlib.pyplot as PL
+import matplotlib.pyplot as plt
 from util import *
 import numpy as np
-import cv2
+from stats import *
 
 def fig_to_ndarray_tb(fig):
     fig.canvas.draw()
@@ -11,75 +9,48 @@ def fig_to_ndarray_tb(fig):
     data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
     return data
 
-def _fig_to_ndarray(fig):
-    fig.canvas.draw()
-    data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    #data = cv2.cvtColor(data, cv2.COLOR_RGB2BGR)
-    data = data.transpose(2, 0, 1)
-    PL.close(fig)
 
-    return data
+available_clrs = ['y', 'r', 'g', 'b']
 
-class VisdomWindowManager(visdom.Visdom):
-    def __init__(self, **kwargs):
-        visdom.Visdom.__init__(self, **kwargs)
-        self.scalar_plot_length = {}
-        self.scalar_plot_prev_point = {}
+def getclrs(n_branches, n_levels):
+    clrs = []
+    for j in range(n_levels):
+        clrs += [available_clrs[j]] * (n_branches ** (j + 1))
 
-        self.mpl_figure_sequence = {}
+    return clrs
 
-    def append_scalar(self, name, value, t=None, opts=None):
-        if self.scalar_plot_length.get(name, 0) == 0:
-            # If we are creating a scalar plot, store the starting point but
-            # don't plot anything yet
-            self.close(name)
-            t = 0 if t is None else t
-            self.scalar_plot_length[name] = 0
-        else:
-            # If we have at least two values, then plot a segment
-            t = self.scalar_plot_length[name] if t is None else t
-            prev_v, prev_t = self.scalar_plot_prev_point[name]
-            newopts = {'xlabel': 'time', 'ylabel': name}
-            if opts is not None:
-                newopts.update(opts)
-            self.line(
-                    X=np.array([prev_t, t]),
-                    Y=np.array([prev_v, value]),
-                    win=name,
-                    update=None if not self.win_exists(name) else 'append',
-                    opts=newopts
-                    )
 
-        self.scalar_plot_prev_point[name] = (value, t)
-        self.scalar_plot_length[name] += 1
+def viz(epoch, imgs, bboxes, g_arr, tag, writer, n_branches=2, n_levels=2):
+    length = len(g_arr)
+    statplot = StatPlot(5, 2)
+    statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
 
-    def display_mpl_figure(self, fig, **kwargs):
-        '''
-        Call this function before calling 'PL.show()' or 'PL.savefig()'.
-        '''
-        self.image(
-                _fig_to_ndarray(fig),
-                **kwargs
-                )
+    clrs = getclrs(n_branches, n_levels)
+    for j in range(10):
+        statplot.add_image(
+            imgs[j].permute(1, 2, 0),
+            bboxs=[bbox[j] for bbox in bboxes],
+            clrs=clrs, #['y', 'y', 'r', 'r', 'r', 'r'],
+            lws=[5] * length #att[j, 1:] * length
+        )
+        for k in range(length):
+            # TODO titled with accuracy
+            statplot_g_arr[k].add_image(g_arr[k][j].permute(1, 2, 0))
 
-    def reset_mpl_figure_sequence(self, name):
-        self.mpl_figure_sequence[name] = []
-
-    def append_mpl_figure_to_sequence(self, name, fig):
-        data = _fig_to_ndarray(fig)
-        data = data.transpose(1, 2, 0)
-        if name not in self.mpl_figure_sequence:
-            self.reset_mpl_figure_sequence(name)
-        self.mpl_figure_sequence[name].append(data)
-
-    def display_mpl_figure_sequence(self, name, **kwargs):
-        data_seq = self.mpl_figure_sequence[name]
-        video_rows, video_cols = data_seq[0].shape[:2]
-        data_seq = [cv2.resize(f, (video_cols, video_rows)) for f in data_seq]
-        data_seq = np.array(data_seq, dtype=np.uint8)
-
-        self.video(
-                data_seq,
-                **kwargs
-                )
+    statplot_disp_g = StatPlot(5, 2)
+    channel, row, col = imgs[-1].shape
+    for j in range(10):
+        bbox_list = [
+            np.array([0, 0, col, row])
+        ] + [
+            bbox_batch[j] for bbox_batch in bboxes
+        ]
+        glim_list = [
+            g_arr[k][j].permute(1, 2, 0) for k in range(length)]
+        statplot_disp_g.add_image(
+            display_glimpse(channel, row, col, bbox_list, glim_list))
+    writer.add_image('Image/{}/disp_glim'.format(tag), fig_to_ndarray_tb(statplot_disp_g.fig), epoch)
+    writer.add_image('Image/{}/viz_bbox'.format(tag), fig_to_ndarray_tb(statplot.fig), epoch)
+    for k in range(length):
+        writer.add_image('Image/{}/viz_glim_{}'.format(tag, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
+    plt.close('all')
