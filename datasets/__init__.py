@@ -1,5 +1,5 @@
 import torchvision
-from torchvision.transforms import ToTensor, RandomCrop, RandomHorizontalFlip, Normalize, Compose, ToPILImage, Resize
+from torchvision.transforms import ToTensor, RandomCrop, RandomHorizontalFlip, Normalize, Compose, ToPILImage, Resize, CenterCrop
 from .mnist import MNISTMulti
 from .wrapper import wrap_output
 from .sampler import SubsetSampler
@@ -99,12 +99,16 @@ def get_generator(args):
         transform_train = Compose([
             ToPILImage(),
             RandomCrop(448),
-            Resize(512),
             RandomHorizontalFlip(),
             ToTensor(),
         ])
+        transform_test = Compose([
+            ToPILImage(),
+            CenterCrop(448),
+            ToTensor(),
+        ])
         dataset_train = BirdSingle('train', transform=transform_train)
-        dataset_test = BirdSingle('test')
+        dataset_test = BirdSingle('test', transform=transform_test)
         train_sampler = SubsetRandomSampler(range(0, 3000))
         #valid_sampler = SubsetSampler(range(2700, 3000))
         test_sampler = SubsetSampler(range(0, 3033))

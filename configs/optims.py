@@ -27,15 +27,13 @@ OPTIM_PARAMS = {
     'bird': {
         'mode': 'rmsprop',
         'args': {
-            'lr': 1e-4,
+            'lr': 3e-5,
             'weight_decay': 4e-5,
-            'momentum': 0.9,
-            'alpha': 0.9,
         },
         'scheduler_mode': 'steplr',
         'scheduler_args': {
             'step_size': 10,
-            'gamma': 0.94
+            'gamma': 0.9
         }
     },
     'dogs': {
@@ -57,7 +55,7 @@ def create_optim(mode, params, args_dict):
     if mode == 'sgd':
         return optim.SGD(params, **args_dict)
     elif mode == 'adam':
-        return optim.Adam(parms, **args_dict)
+        return optim.Adam(params, **args_dict)
     elif mode == 'rmsprop':
         return optim.RMSprop(params, **args_dict)
     else: # unexpected behavior

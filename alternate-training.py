@@ -49,6 +49,7 @@ else:
     builder = cuda(nn.DataParallel(TreeBuilder(n_branches=n_branches,
                             n_levels=n_levels,
                             n_classes=network_params['n_classes'],
+                            share=args.share,
                             regularizer_classes=regularizer_classes,
                             glimpse_type=args.glm_type,
                             glimpse_size=(args.glm_size, args.glm_size),
@@ -60,6 +61,7 @@ else:
                             what__in_dims=network_params['in_dims'])))
     readout = cuda(nn.DataParallel(
         create_readout('alpha',
+                       share=args.share,
                        final_n_channels=network_params['final_n_channels'],
                        n_branches=n_branches,
                        n_levels=n_levels,
@@ -86,6 +88,8 @@ def train():
     levels = args.levels_from
     n_train_batches = len(train_loader)
 
+    #params_where_ids = map(id, builder.module.upd_b.parameters())
+    params_where_ids = []
     params = list(builder.parameters()) + list(readout.parameters())
     """
     if args.dataset.startswith('mnist'):
@@ -107,7 +111,7 @@ def train():
     opt_params = OPTIM_PARAMS[args.dataset]
     opt = create_optim(
         opt_params['mode'],
-        params,
+        filter(lambda x: id(x) not in params_where_ids, params),
         opt_params['args']
     )
 

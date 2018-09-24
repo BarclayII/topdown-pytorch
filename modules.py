@@ -101,6 +101,43 @@ def build_cnn(**config):
 
     return nn.Sequential(*cnn_list)
 
+class CommNet(nn.Module):
+    def __init__(self, n_steps=1, n_branches=1, in_dims=128, h_dims=128, g_dims=6):
+        """
+        Multi-agent communication for childs.
+        Reference: https://arxiv.org/pdf/1605.07736.pdf
+        """
+        super(CommNet, self).__init__()
+        self.n_steps = n_steps
+        self.n_branches = n_branches
+        self.h_dims = h_dims
+        self.g_dims = g_dims
+        self.affine_state = nn.Linear(in_dims // self.n_branches, h_dims)
+        self.affine_h = nn.ModuleList(
+            nn.Linear(h_dims, h_dims, bias=False)
+            for _ in range(n_steps)
+        )
+        self.affine_c = nn.ModuleList(
+            nn.Linear(h_dims, h_dims, bias=False)
+            for _ in range(n_steps)
+        )
+        self.net_g = nn.Linear(h_dims, g_dims)
+
+    def forward(self, fm):
+        shape = fm.shape
+        states = self.affine_state(
+            fm.view(*shape[:-1], self.n_branches, -1)
+        ) #self.affine_state(fm).view(*shape[:-1], self.n_branches, self.h_dims)
+        hs = states
+        for i in range(self.n_steps):
+            h_sum = hs.sum(dim=-2, keepdim=True)
+            cs = (h_sum - hs) / (1e-8 + self.n_branches - 1)
+            hs = F.tanh(
+                self.affine_h[i](hs) +
+                self.affine_c[i](cs)
+            )
+        return self.net_g(hs).view(*shape[:-1], self.n_branches * self.g_dims)
+
 class WhatModule(nn.Module):
     def __init__(self, filters, kernel_size, final_pool_size, h_dims, n_classes, cnn=None, in_dims=None, fix=False):
         super(WhatModule, self).__init__()
@@ -123,7 +160,6 @@ class WhatModule(nn.Module):
                     cnn.layer2,
                     cnn.layer3,
                     cnn.layer4,
-                    nn.AdaptiveMaxPool2d(final_pool_size)
             )
         elif callable(cnn):
             self.cnn = cnn()
@@ -157,6 +193,7 @@ class GlimpseUpdater(nn.Module):
     def __init__(self, glimpse, input_dims, h_dims, g_dims, n_branches, n_levels):
         super(GlimpseUpdater, self).__init__()
         self.glimpse = glimpse
+        """
         net_b = nn.ModuleList(
                 nn.Sequential(
                     nn.Linear(input_dims, h_dims),
@@ -167,7 +204,12 @@ class GlimpseUpdater(nn.Module):
                     )
                 for _ in range(n_levels + 1)
                 )
-        self.net_b = net_b
+        """
+        self.net_b = nn.ModuleList(
+            CommNet(2, n_branches, input_dims, h_dims, g_dims)
+            for _ in range(n_levels + 1)
+        )
+
         self.n_branches = n_branches
         self.g_dims = g_dims
 
@@ -230,7 +272,7 @@ class PCRegularizer(Regularizer):
                 pc_par.append(t[(i - 1) // self.n_branches].b)
                 pc_chd.append(t[i].b)
 
-        loss_pc = F_reg_pc(T.stack(pc_par, 1), T.stack(pc_chd, 1)) if lvl >= 1 else x.new(1).zero_()
+        loss_pc = F_reg_pc(T.stack(pc_par, 1), T.stack(pc_chd, 1)) if lvl >= 1 else cuda(T.zeros(1)) #x.new(1).zero_()
         return self.coef * loss_pc
 
 
@@ -283,6 +325,7 @@ class TreeBuilder(nn.Module):
                  n_classes=10,
                  n_branches=1,
                  n_levels=1,
+                 share=False,
                  glimpse_type='gaussian',
                  explore=False,
                  bind=False,
@@ -332,6 +375,7 @@ class TreeBuilder(nn.Module):
         self.h_dims = h_dims
         self.fm_glim_size = fm_glim_size
         self.fm_target_size = fm_target_size
+        self.share = share
 
         self.regs = nn.ModuleList()
         for reg_cls, reg_coef in regularizer_classes.items():
@@ -360,7 +404,11 @@ class TreeBuilder(nn.Module):
         x_g = self.glimpse(x, b)
         n_glimpses = x_g.shape[1]
         x_g_flat = x_g.view(batch_size * n_glimpses, *x_g.shape[2:])
-        fm = self.net_phi[l](x_g_flat)
+        if self.share:
+            phi = self.net_phi[0]
+        else:
+            phi = self.net_phi[l]
+        fm = phi(x_g_flat)
         fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
         h = self.net_h(fm, b)
         new_b = None
@@ -400,7 +448,8 @@ class TreeBuilder(nn.Module):
         return t, regularizer_losses
 
 class ReadoutModule(nn.Module):
-    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1):
+    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1, share=False):
+        self.share = share
         super(ReadoutModule, self).__init__()
 
     @abstractclassmethod
@@ -411,19 +460,16 @@ class AlphaChannelReadoutModule(ReadoutModule):
     '''
     Only works when using inverse glimpse (i.e. have fm and alpha channels)
     '''
-    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1):
+    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1, share=False):
         super(AlphaChannelReadoutModule, self).__init__()
         pool_size = (1, 1)
         self.predictor = nn.ModuleList(
-                nn.Sequential(
-                    nn.Linear(np.prod(pool_size) * final_n_channels, h_dims),
-                    nn.ReLU(),
-                    nn.Linear(h_dims, n_classes)
-                ) for _ in range(n_levels + 1)
+                nn.Linear(np.prod(pool_size) * final_n_channels, n_classes)
+                for _ in range(n_levels + 1)
             )
         self.n_branches = n_branches
         self.n_levels = n_levels
-        self.maxpool = nn.AdaptiveMaxPool2d(pool_size)
+        self.maxpool = nn.AdaptiveAvgPool2d(pool_size)
 
     def forward(self, t, lvls=None):
         if lvls is None:
@@ -440,7 +486,11 @@ class AlphaChannelReadoutModule(ReadoutModule):
             batch_size = fm_accum.shape[0]
             h_accum = self.maxpool(fm_accum).view(batch_size, -1)
             h = h_accum
-            results.append(self.predictor[lvl](h))
+            if self.share:
+                net_pred = self.predictor[0]
+            else:
+                net_pred = self.predictor[lvl]
+            results.append(net_pred(h))
             hs.append(h)
             fm_accum.detach_()
 
@@ -452,7 +502,7 @@ class NodewiseMaxPoolingReadoutModule(ReadoutModule):
     '''
     Only works when h is a hidden state tensor
     '''
-    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1):
+    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1, share=False):
         super(NodewiseMaxPoolingReadoutModule, self).__init__()
         self.predictor = nn.ModuleList(
                 nn.Sequential(

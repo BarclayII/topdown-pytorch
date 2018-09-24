@@ -243,7 +243,7 @@ class GaussianGlimpse(NN.Module):
 
     def _to_axis_attention(self, image_len, glim_len, c, d, s):
         c = c * image_len
-        d = d * (image_len - 1) / (glim_len - 1)
+        d = d * (image_len - 1 + 1e-5) / (glim_len - 1 + 1e-5)
         s = (s + 1e-5) * image_len / glim_len
         return c, d, s
 
