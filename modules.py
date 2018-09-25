@@ -129,7 +129,7 @@ class CommNet(nn.Module):
     def forward(self, fm):
         shape = fm.shape
         hs = self.affine_state(fm.view(shape[0], shape[1], -1))
-        hs = hs[:, None].repeat(1, self.n_branches, 1)
+        hs = hs[:, None].repeat(1, self.n_branches, 1, 1)   # (batch_size, n_branches, n_glimpses, *)
         for i in range(self.n_steps):
             h_sum = hs.sum(dim=-2, keepdim=True)
             cs = (h_sum - hs) / (1e-8 + self.n_branches - 1)
