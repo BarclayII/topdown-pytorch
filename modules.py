@@ -127,7 +127,7 @@ class CommNet(nn.Module):
 
     def forward(self, fm):
         shape = fm.shape
-        hs = fm.view(shape[0], 1, -1).repeat(1, self.n_branches, 1).unbind(1)
+        hs = fm.view(shape[0], 1, -1).repeat(1, self.n_branches, 1)
         for i in range(self.n_steps):
             h_sum = hs.sum(dim=-2, keepdim=True)
             cs = (h_sum - hs) / (1e-8 + self.n_branches - 1)
