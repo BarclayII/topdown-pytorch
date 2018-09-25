@@ -134,7 +134,7 @@ class CommNet(nn.Module):
             h_sum = hs.sum(dim=-2, keepdim=True)
             cs = (h_sum - hs) / (1e-8 + self.n_branches - 1)
             hs = T.stack([
-                F.tanh(self.affine_h[j][i](hs[:, j]) + self.affine_c[j][i](cs))
+                F.tanh(self.affine_h[j][i](hs[:, j]) + self.affine_c[j][i](cs[:, j]))
                 for j in range(self.n_branches)
             ], 1)
         return self.net_g(hs).view(*shape[:-1], self.n_branches * self.g_dims)
