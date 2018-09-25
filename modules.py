@@ -112,30 +112,29 @@ class CommNet(nn.Module):
         self.n_branches = n_branches
         self.h_dims = h_dims
         self.g_dims = g_dims
-        self.affine_state = nn.Linear(in_dims // self.n_branches, h_dims)
-        self.affine_h = nn.ModuleList(
-            nn.Linear(h_dims, h_dims, bias=False)
-            for _ in range(n_steps)
-        )
-        self.affine_c = nn.ModuleList(
-            nn.Linear(h_dims, h_dims, bias=False)
-            for _ in range(n_steps)
-        )
+        self.affine_h = nn.ModuleList()     # self.affine_h[branch_id][step_id]
+        self.affine_c = nn.ModuleList()
+        for i in range(n_branches):
+            self.affine_h.append(nn.ModuleList(
+                nn.Linear(h_dims, h_dims, bias=False)
+                for _ in range(n_steps)
+            ))
+            self.affine_c.append(nn.ModuleList(
+                nn.Linear(h_dims, h_dims, bias=False)
+                for _ in range(n_steps)
+            ))
         self.net_g = nn.Linear(h_dims, g_dims)
 
     def forward(self, fm):
         shape = fm.shape
-        states = self.affine_state(
-            fm.view(*shape[:-1], self.n_branches, -1)
-        ) #self.affine_state(fm).view(*shape[:-1], self.n_branches, self.h_dims)
-        hs = states
+        hs = fm.view(shape[0], 1, -1).repeat(1, self.n_branches, 1).unbind(1)
         for i in range(self.n_steps):
             h_sum = hs.sum(dim=-2, keepdim=True)
             cs = (h_sum - hs) / (1e-8 + self.n_branches - 1)
-            hs = F.tanh(
-                self.affine_h[i](hs) +
-                self.affine_c[i](cs)
-            )
+            hs = T.stack([
+                F.tanh(self.affine_h[j][i](hs[:, j]) + self.affine_c[j][i](cs))
+                for j in range(self.n_branches)
+            ], 1)
         return self.net_g(hs).view(*shape[:-1], self.n_branches * self.g_dims)
 
 class WhatModule(nn.Module):
