@@ -112,6 +112,7 @@ class CommNet(nn.Module):
         self.n_branches = n_branches
         self.h_dims = h_dims
         self.g_dims = g_dims
+        self.affine_state = nn.Linear(in_dims, h_dims)
         self.affine_h = nn.ModuleList()     # self.affine_h[branch_id][step_id]
         self.affine_c = nn.ModuleList()
         for i in range(n_branches):
@@ -127,7 +128,8 @@ class CommNet(nn.Module):
 
     def forward(self, fm):
         shape = fm.shape
-        hs = fm.view(shape[0], 1, -1).repeat(1, self.n_branches, 1)
+        hs = self.affine_state(fm.view(shape[0], -1))
+        hs = hs[:, None].repeat(1, self.n_branches, 1)
         for i in range(self.n_steps):
             h_sum = hs.sum(dim=-2, keepdim=True)
             cs = (h_sum - hs) / (1e-8 + self.n_branches - 1)
