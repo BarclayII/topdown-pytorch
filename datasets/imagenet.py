@@ -3,6 +3,7 @@ import pickle
 import torch as T
 from torch.utils.data import Dataset
 from torch.utils.data.sampler import BatchSampler
+from torchvision.transforms import RandomResizedCrop, ColorJitter
 from util import *
 from PIL import Image
 import os
@@ -51,6 +52,10 @@ class ImageNetSingle(Dataset):
             height = int(width / self.target_aspect[i])
 
         _img = _img.convert('RGB').resize((width, height), Image.BILINEAR)
+        
+        _resizer = RandomResizedCrop(min(width, height))
+        _jitterer = ColorJitter(0.1, 0.1, 0.1, 0.05)
+        _img = _jitterer(_resizer(_img))
 
         img = T.FloatTensor(np.array(_img)).permute(2, 0, 1) / 255.
         _img.close()

@@ -3,11 +3,11 @@ import torch.nn.functional as F
 from torchvision.datasets import MNIST, CIFAR10
 from torchvision.transforms import Compose, ToTensor, Normalize, RandomCrop, RandomHorizontalFlip
 from datasets import get_generator
-from modules import WhatModule
+from modules import WhatModule, InverseGlimpse
 from glimpse import GaussianGlimpse, BilinearGlimpse
 import pytorch_cifar.models
 import torchvision.models
-from util import USE_CUDA, cuda
+from util import USE_CUDA, cuda, imagenet_normalize
 import numpy as np
 import argparse
 import tqdm
@@ -49,6 +49,7 @@ else:
     #cnn = miniresnet20(num_classes=10)
     #cnn = getattr(pytorch_cifar.models, args.cnn)(1000)
     cnn = getattr(torchvision.models, args.cnn)(pretrained=True)
+    cnn.fc = T.nn.Linear(512 * 4, 120)
     module = T.nn.DataParallel(T.nn.Sequential(
             #MultiscaleGlimpse(glimpse_type='gaussian', glimpse_size=(50, 50), n_glimpses=n_glimpses),
             cnn,
@@ -99,9 +100,9 @@ best_acc = 0
 best_valid_loss = 1e6
 best_epoch = 0
 n_iter = 0
-for epoch in range(200):
+for epoch in range(2000):
     if epoch == 0:
-        opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=1e-5)
+        opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
     #elif epoch == 1:
     #    opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=0)
     correct = 0
@@ -111,6 +112,7 @@ for epoch in range(200):
     with tqdm.tqdm(train_dataloader) as t:
         for item in t:
             x, y, b = preprocessor(item)
+            x = imagenet_normalize(x)
             #g1 = cuda(T.nn.DataParallel(BilinearGlimpse((x.shape[2], x.shape[3]))))
             #b = g.module.full()[None, None, :].expand(args.batch_size, 1, 6)
             #b1 = g1.module.full()[None, None, :].expand(args.batch_size, 1, 4)
@@ -137,6 +139,7 @@ for epoch in range(200):
         with T.no_grad():
             for item in t:
                 x, y, b = preprocessor(item)
+                x = imagenet_normalize(x)
                 #g1 = cuda(T.nn.DataParallel(BilinearGlimpse((x.shape[2], x.shape[3]))))
                 #b = g.module.full()[None, None, :].expand(args.batch_size, 1, 6)
                 #b1 = g1.module.full()[None, None, :].expand(args.batch_size, 1, 4)
@@ -158,7 +161,7 @@ for epoch in range(200):
     if best_valid_loss > avg_loss:
         best_valid_loss = avg_loss
         best_epoch = epoch
-    elif best_epoch < epoch - 5:
+    elif best_epoch < epoch - 20:
         if lr > 0.0001:
             best_epoch = epoch
             print('Shrinking learning rate...')
