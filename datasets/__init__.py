@@ -19,7 +19,7 @@ def data_generator_mnistmulti(dataset, batch_size, **config):
 def preprocess_mnistmulti(item):
     _x, _y, _B = item
     x = _x[:, None].expand(_x.shape[0], 3, _x.shape[1], _x.shape[2]).float() / 255.
-    y = _y
+    y = _y.sort(dim=-1)[0]
     n_digits = y.shape[1]
     new_y = y[:, 0]
     for digit in range(1, n_digits):

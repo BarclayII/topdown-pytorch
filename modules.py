@@ -191,6 +191,32 @@ class InverseGlimpse(nn.Module):
         fm_new, fm_alpha = F_spatial_feature_map(fm, abs_b, self.fm_target_size)
         return fm_new, fm_alpha
 
+class SequentialGlimpse(nn.Module):
+    def __init__(self, input_dims, h_dims, g_dims, n_branches):
+        super(SequentialGlimpse, self).__init__()
+        self.net_h = nn.Linear(input_dims, h_dims)
+        self.rnn = nn.RNNCell(g_dims, h_dims)
+        self.out = nn.Linear(h_dims, g_dims)
+        self.input_dims = input_dims
+        self.h_dims = h_dims
+        self.g_dims = g_dims
+        self.n_branches = n_branches
+
+    def forward(self, x):
+        pre_shape = x.shape[:2]
+        batch_size = np.prod(pre_shape)
+        h = T.tanh(self.net_h(x.view(batch_size, -1)))
+        input_g = h.new(batch_size, self.g_dims).zero_()
+        gs = []
+        for _ in range(self.n_branches):
+            h = self.rnn(input_g, h)
+            gs.append(
+                self.out(h)
+            )
+            input_g = gs[-1]
+        gs = T.cat(gs, dim=-1).view(*pre_shape, self.n_branches * self.g_dims)
+        return gs
+
 class GlimpseUpdater(nn.Module):
     def __init__(self, glimpse, input_dims, h_dims, g_dims, n_branches, n_levels):
         super(GlimpseUpdater, self).__init__()
@@ -208,7 +234,8 @@ class GlimpseUpdater(nn.Module):
                 )
         """
         self.net_b = nn.ModuleList(
-            CommNet(2, n_branches, input_dims, h_dims, g_dims)
+            #CommNet(2, n_branches, input_dims, h_dims, g_dims)
+            SequentialGlimpse(input_dims, h_dims, g_dims, n_branches)
             for _ in range(n_levels + 1)
         )
 
