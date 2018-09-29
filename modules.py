@@ -485,20 +485,66 @@ class ReadoutModule(nn.Module):
     def forward(self, t, lvls=None):
         raise NotImplementedError
 
+class UnlinearReadoutModule(ReadoutModule):
+    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=4, n_levels=1, share=False):
+        super(UnlinearReadoutModule, self).__init__()
+        pool_size = 1
+        self.linear_fm = nn.Linear(final_n_channels, h_dims)
+        self.linear_g = nn.Linear(g_dims, h_dims)
+        self.predictor = nn.ModuleList(
+            nn.Linear(h_dims, n_classes)
+            for _ in range(n_levels + 1)
+        )
+        self.n_branches = n_branches
+        self.n_levels = n_levels
+        self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
+
+    def forward(self, t, lvls=None):
+        if lvls is None:
+            lvls = self.n_levels
+        results = []
+        hs = []
+        h_accum = 0
+        for lvl in range(lvls + 1):
+            nodes = t[num_nodes(lvl - 1, self.n_branches): num_nodes(lvl, self.n_branches)]
+            for node in nodes:
+                fm, alpha = node.h
+                b = node.b.detach()
+                batch_size = fm.shape[0]
+                fm = self.avgpool(fm).view(batch_size, -1)
+                h = T.tanh(
+                    self.linear_fm(fm) +
+                    self.linear_g(b)
+                )
+
+                h_accum += h
+
+            h = h_accum / len(nodes)
+            if self.share:
+                net_pred = self.predictor[0]
+            else:
+                net_pred = self.predictor[lvl]
+            results.append(net_pred(h))
+            hs.append(h)
+            h_accum.detach_()
+
+        self.hs = hs
+        return results
+
 class AlphaChannelReadoutModule(ReadoutModule):
     '''
     Only works when using inverse glimpse (i.e. have fm and alpha channels)
     '''
     def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1, share=False):
         super(AlphaChannelReadoutModule, self).__init__()
-        pool_size = (1, 1)
+        pool_size = 1
         self.predictor = nn.ModuleList(
                 nn.Linear(np.prod(pool_size) * final_n_channels, n_classes)
                 for _ in range(n_levels + 1)
             )
         self.n_branches = n_branches
         self.n_levels = n_levels
-        self.maxpool = nn.AdaptiveAvgPool2d(pool_size)
+        self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
 
     def forward(self, t, lvls=None):
         if lvls is None:
@@ -513,7 +559,7 @@ class AlphaChannelReadoutModule(ReadoutModule):
                 fm, alpha = node.h
                 fm_accum = fm_accum * (1 - alpha) + fm * alpha
             batch_size = fm_accum.shape[0]
-            h_accum = self.maxpool(fm_accum).view(batch_size, -1)
+            h_accum = self.avgpool(fm_accum).view(batch_size, -1)
             h = h_accum
             if self.share:
                 net_pred = self.predictor[0]
@@ -569,8 +615,7 @@ def create_readout(mode, **kwargs):
     elif mode == 'max':
         return NodewiseMaxPoolingReadoutModule(**kwargs)
     elif mode == 'unlinear':
-        # TODO
-        raise NotImplementedError
+        return UnlinearReadoutModule(**kwargs)
     elif mode == 'mp': # Message Passing
         # TODO
         raise NotImplementedError

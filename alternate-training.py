@@ -60,7 +60,7 @@ else:
                             what__fix=args.fix,
                             what__in_dims=network_params['in_dims'])))
     readout = cuda(nn.DataParallel(
-        create_readout('alpha',
+        create_readout('unlinear',
                        share=args.share,
                        final_n_channels=network_params['final_n_channels'],
                        n_branches=n_branches,
