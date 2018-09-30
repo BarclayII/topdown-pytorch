@@ -93,7 +93,7 @@ net = skorch.NeuralNetClassifier(
 
 g = cuda(T.nn.DataParallel(GaussianGlimpse((50, 50))))
 
-lr = 0.1
+lr = 1
 #opt = T.optim.Adam(module.parameters(), weight_decay=5e-4)
 
 best_acc = 0
