@@ -489,8 +489,14 @@ class UnlinearReadoutModule(ReadoutModule):
     def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=4, n_levels=1, share=False):
         super(UnlinearReadoutModule, self).__init__()
         pool_size = 1
-        self.linear_fm = nn.Linear(final_n_channels, h_dims)
-        self.linear_g = nn.Linear(g_dims, h_dims)
+        self.linear_fm = nn.ModuleList(
+            nn.Linear(final_n_channels, h_dims)
+            for _ in range(n_levels + 1)
+        )
+        self.linear_g = nn.ModuleList(
+            nn.Linear(g_dims, h_dims)
+            for _ in range(n_levels + 1)
+        )
         self.predictor = nn.ModuleList(
             nn.Linear(h_dims, n_classes)
             for _ in range(n_levels + 1)
@@ -513,8 +519,8 @@ class UnlinearReadoutModule(ReadoutModule):
                 batch_size = fm.shape[0]
                 fm = self.avgpool(fm).view(batch_size, -1)
                 h = T.tanh(
-                    self.linear_fm(fm) +
-                    self.linear_g(b)
+                    self.linear_fm[lvl](fm) +
+                    self.linear_g[lvl](b)
                 )
 
                 h_accum += h
@@ -554,7 +560,7 @@ class AlphaChannelReadoutModule(ReadoutModule):
         fm_accum = 0
         for lvl in range(lvls + 1):
             nodes = t[num_nodes(lvl - 1, self.n_branches): num_nodes(lvl, self.n_branches)]
-            random.shuffle(nodes)
+            #random.shuffle(nodes)
             for node in nodes:
                 fm, alpha = node.h
                 fm_accum = fm_accum * (1 - alpha) + fm * alpha
