@@ -60,7 +60,7 @@ else:
                             what__fix=args.fix,
                             what__in_dims=network_params['in_dims'])))
     readout = cuda(nn.DataParallel(
-        create_readout('maxgated',
+        create_readout(args.readout,
                        share=args.share,
                        final_n_channels=network_params['final_n_channels'],
                        n_branches=n_branches,
@@ -319,7 +319,7 @@ def train():
             T.save(builder.state_dict(), 'checkpoints/{}_builder_best.pt'.format(expr_setting))
             T.save(readout.state_dict(), 'checkpoints/{}_readout_best.pt'.format(expr_setting))
             best_epoch[lvl_turn] = epoch
-        elif (best_epoch[lvl_turn] <= epoch - 5 or epoch == n_epochs - 1) and test_loader is not None:
+        elif (best_epoch[lvl_turn] <= epoch - 10 or epoch == n_epochs - 1) and test_loader is not None:
             print('Early Stopping on level {}...'.format(lvl_turn))
             coef_lvl[lvl_turn] = 0
             lvl_turn += 1
