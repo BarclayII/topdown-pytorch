@@ -615,6 +615,75 @@ class NodewiseMaxPoolingReadoutModule(ReadoutModule):
         self.hs = hs
         return results
 
+
+class GatedBranchReadoutModule(ReadoutModule):
+    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1, share=False):
+        super().__init__()
+        self.projector = nn.Linear(final_n_channels, h_dims)
+        self.predictor = nn.ModuleList(
+                nn.Sequential(
+                    nn.Linear(h_dims, h_dims),
+                    nn.ReLU(),
+                    nn.Linear(h_dims, n_classes),
+                ) for _ in range(n_levels + 1)
+            )
+        self.gater = nn.ModuleList(
+                nn.Sequential(
+                    nn.Linear(h_dims, h_dims),
+                    nn.ReLU(),
+                    nn.Linear(h_dims, 1),
+                ) for _ in range(n_levels + 1)
+            )
+        self.n_branches = n_branches
+        self.n_levels = n_levels
+        self.pool = nn.AdaptiveMaxPool2d((1, 1))
+
+    def forward(self, t, lvls=None):
+        if lvls is None:
+            lvls = self.n_levels
+
+        results = []
+        hs = []
+        n_lvl_nodes = [0] + [num_nodes(lvl, self.n_branches) for lvl in range(lvls + 1)]
+
+        fm, alpha = zip(*[node.h for node in t])
+        fm = T.stack(fm, 1)
+        batch_size, n_nodes, n_channels, fm_rows, fm_cols = fm.shape
+
+        fm = self.pool(fm.view(batch_size * n_nodes, n_channels, fm_rows, fm_cols))
+        h = self.projector(fm.view(batch_size, n_nodes, n_channels))
+
+        g_list = []
+        h_list = []
+        for lvl in range(lvls + 1):
+            n_other_nodes = n_lvl_nodes[lvl + 1] - n_lvl_nodes[lvl]
+            h_lvl = h[:, n_lvl_nodes[lvl]:n_lvl_nodes[lvl+1]]
+            g_score = self.gater[lvl](h_lvl)
+            if lvl == 0:
+                g_score = T.ones_like(g_score)
+                g_list.append(g_score[:, 0])
+            else:
+                # gate value of children themselves relative to their siblings
+                g_score = g_score.view(batch_size, n_other_nodes // self.n_branches, self.n_branches, 1)
+                g_score = F.softmax(g_score, 2).view(batch_size, n_other_nodes, 1)
+                g_score = T.unbind(g_score, 1)
+                # multiply the gate value of their parents
+                g_score = [g_score[_i] * g_list[(i - 1) // self.n_branches]
+                           for _i, i in enumerate(range(n_lvl_nodes[lvl], n_lvl_nodes[lvl+1]))]
+                g_list.extend(g_score)
+                g_score = T.stack(g_score, 1)
+
+            gh = (g_score * h_lvl).sum(1)   # weighted average of features on level @lvl
+            h_list.append(gh)
+
+            gh_all, _ = T.stack(h_list, 1).max(1)   # max-pool over the weighted averages
+            results.append(self.predictor[lvl](gh_all))
+            hs.append(gh_all)
+
+        self.hs = hs
+        self.gs = g_list
+        return results
+
 def create_readout(mode, **kwargs):
     if mode == 'alpha':
         return AlphaChannelReadoutModule(**kwargs)
@@ -622,6 +691,8 @@ def create_readout(mode, **kwargs):
         return NodewiseMaxPoolingReadoutModule(**kwargs)
     elif mode == 'unlinear':
         return UnlinearReadoutModule(**kwargs)
+    elif mode == 'maxgated':
+        return GatedBranchReadoutModule(**kwargs)
     elif mode == 'mp': # Message Passing
         # TODO
         raise NotImplementedError

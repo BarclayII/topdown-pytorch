@@ -93,7 +93,7 @@ net = skorch.NeuralNetClassifier(
 
 g = cuda(T.nn.DataParallel(GaussianGlimpse((50, 50))))
 
-lr = 1
+lr = 0.1
 #opt = T.optim.Adam(module.parameters(), weight_decay=5e-4)
 
 best_acc = 0
@@ -102,9 +102,10 @@ best_epoch = 0
 n_iter = 0
 for epoch in range(2000):
     if epoch == 0:
-        opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
-    #elif epoch == 1:
-    #    opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=0)
+        #opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
+        opt = T.optim.Adam(module.parameters(), weight_decay=5e-4)
+    elif epoch == 1:
+        opt = T.optim.SGD(module.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
     correct = 0
     total = 0
     avg_loss = 0
