@@ -167,18 +167,16 @@ class WhatModule(nn.Module):
             self.cnn = cnn()
         else:
             raise NotImplementedError
-        self.norm = nn.BatchNorm2d(in_dims)
         self.fix = fix
 
     def forward(self, glimpse_kxk):
         batch_size = glimpse_kxk.shape[0]
         if self.fix:
             with T.no_grad():
-                fm = self.norm(self.cnn(glimpse_kxk))
+                fm = self.cnn(glimpse_kxk) #self.norm(self.cnn(glimpse_kxk))
         else:
-            fm = self.norm(self.cnn(glimpse_kxk))
+            fm = self.cnn(glimpse_kxk) #self.norm(self.cnn(glimpse_kxk))
         return fm
-
 
 class InverseGlimpse(nn.Module):
     def __init__(self, glimpse_fm, fm_target_size):
@@ -373,7 +371,7 @@ class TreeBuilder(nn.Module):
 
         fm_glim_size = final_pool_size
         glimpse = create_glimpse(glimpse_type, glimpse_size, explore=explore, bind=bind)
-        glimpse_fm = create_glimpse(glimpse_type, fm_glim_size)
+        glimpse_fm = create_glimpse(glimpse_type, final_pool_size) #fm_glim_size)
         g_dims = glimpse.att_params
 
         net_phi = nn.ModuleList(
@@ -545,9 +543,9 @@ class AlphaChannelReadoutModule(ReadoutModule):
         super(AlphaChannelReadoutModule, self).__init__()
         pool_size = 1
         self.predictor = nn.ModuleList(
-                nn.Linear(np.prod(pool_size) * final_n_channels, n_classes)
-                for _ in range(n_levels + 1)
-            )
+            nn.Linear(np.prod(pool_size) * final_n_channels, n_classes)
+            for _ in range(n_levels + 1)
+        )
         self.n_branches = n_branches
         self.n_levels = n_levels
         self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
@@ -560,7 +558,7 @@ class AlphaChannelReadoutModule(ReadoutModule):
         fm_accum = 0
         for lvl in range(lvls + 1):
             nodes = t[num_nodes(lvl - 1, self.n_branches): num_nodes(lvl, self.n_branches)]
-            #random.shuffle(nodes)
+            random.shuffle(nodes)
             for node in nodes:
                 fm, alpha = node.h
                 fm_accum = fm_accum * (1 - alpha) + fm * alpha
