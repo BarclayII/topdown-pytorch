@@ -60,7 +60,7 @@ else:
                             what__fix=args.fix,
                             what__in_dims=network_params['in_dims'])))
     readout = cuda(nn.DataParallel(
-        create_readout('alpha',
+        create_readout(args.readout,
                        share=args.share,
                        final_n_channels=network_params['final_n_channels'],
                        n_branches=n_branches,
@@ -163,6 +163,7 @@ def train():
                 total_loss = loss_pc + loss_cc + loss_res
                 for lvl in range(readout_start_lvl, levels + 1):
                     y_pred  = readout_list[lvl]
+                    y_pred_cls = y_pred.max(dim=-1)[1]
                     y_score = y_pred.gather(1, y[:, None])[:, 0]
                     loss_ce = F.cross_entropy(y_pred, y) * coef_lvl[lvl]
                     train_loss_dict['ce'] += loss_ce.item()
@@ -172,7 +173,7 @@ def train():
                     y_score_last = y_score
 
                     total_loss = total_loss + loss
-                    current_hit = (y_pred.max(dim=-1)[1] == y).sum().item()
+                    current_hit = (y_pred_cls == y).sum().item()
                     levelwise_hit[lvl] += current_hit
 
                 opt.zero_grad()
@@ -194,6 +195,7 @@ def train():
                     sample_g_arr = [
                         normalize_inverse(t[_].g[:10].detach()) for _ in range(length)]
                     viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, 'train', writer,
+                            y_pred_cls, y,
                             n_branches=n_branches, n_levels=n_levels)
 
                 tq.set_postfix({
@@ -233,13 +235,14 @@ def train():
 
                 for lvl in range(readout_start_lvl, levels + 1):
                     y_pred = readout_list[lvl]
+                    y_pred_cls = y_pred.max(dim=-1)[1]
 
                     loss = F.cross_entropy(
                         y_pred, y
                     ) * coef_lvl[lvl]
                     total_loss += loss
                     levelwise_loss[lvl] += loss.item()
-                    levelwise_hit[lvl] += (y_pred.max(dim=-1)[1] == y).sum().item()
+                    levelwise_hit[lvl] += (y_pred_cls == y).sum().item()
 
                 sum_loss += total_loss.item()
                 hit = levelwise_hit[levels]
@@ -257,6 +260,7 @@ def train():
                         normalize_inverse(t[_].g[:10]) for _ in range(length)]
 
                     viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, 'valid', writer,
+                            y_pred_cls, y,
                             n_branches=n_branches, n_levels=levels)
 
                     if args.nearest:
@@ -319,7 +323,7 @@ def train():
             T.save(builder.state_dict(), 'checkpoints/{}_builder_best.pt'.format(expr_setting))
             T.save(readout.state_dict(), 'checkpoints/{}_readout_best.pt'.format(expr_setting))
             best_epoch[lvl_turn] = epoch
-        elif (best_epoch[lvl_turn] <= epoch - 5 or epoch == n_epochs - 1) and test_loader is not None:
+        elif (best_epoch[lvl_turn] <= epoch - 10 or epoch == n_epochs - 1) and test_loader is not None:
             print('Early Stopping on level {}...'.format(lvl_turn))
             coef_lvl[lvl_turn] = 0
             lvl_turn += 1
