@@ -580,11 +580,9 @@ class AlphaChannelReadoutModule(ReadoutModule):
 
 
 class NodewiseMaxPoolingReadoutModule(ReadoutModule):
-    '''
-    Only works when h is a hidden state tensor
-    '''
     def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1, share=False):
         super(NodewiseMaxPoolingReadoutModule, self).__init__()
+        self.projector = nn.Linear(final_n_channels, h_dims)
         self.predictor = nn.ModuleList(
                 nn.Sequential(
                     nn.Linear(h_dims, h_dims),
@@ -594,6 +592,7 @@ class NodewiseMaxPoolingReadoutModule(ReadoutModule):
             )
         self.n_branches = n_branches
         self.n_levels = n_levels
+        self.pool = nn.AdaptiveMaxPool2d((1, 1))
 
     def forward(self, t, lvls=None):
         """
@@ -605,11 +604,16 @@ class NodewiseMaxPoolingReadoutModule(ReadoutModule):
         results = []
         hs = []
 
+        fm, alpha = zip(*[node.h for node in t])
+        fm = T.stack(fm, 1)
+        batch_size, n_nodes, n_channels, fm_rows, fm_cols = fm.shape
+        fm = self.pool(fm.view(batch_size * n_nodes, n_channels, fm_rows, fm_cols))
+        h = self.projector(fm.view(batch_size, n_nodes, n_channels))
+
         for lvl in range(lvls + 1):
             # Includes all nodes before the @lvl'th level
-            nodes = t[:num_nodes(lvl, self.n_branches)]
-            h, _ = T.stack([node.h for node in nodes], 1).max(1)
-            results.append(self.predictor[lvl](h))
+            h_lvl, _ = h[:, :num_nodes(lvl, self.n_branches)].max(1)
+            results.append(self.predictor[lvl](h_lvl))
             hs.append(h)
 
         self.hs = hs

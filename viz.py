@@ -20,7 +20,7 @@ def getclrs(n_branches, n_levels):
     return clrs
 
 
-def viz(epoch, imgs, bboxes, g_arr, tag, writer, n_branches=2, n_levels=2):
+def viz(epoch, imgs, bboxes, g_arr, tag, writer, y_pred, y, n_branches=2, n_levels=2):
     length = len(g_arr)
     statplot = StatPlot(5, 2)
     statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
@@ -31,7 +31,8 @@ def viz(epoch, imgs, bboxes, g_arr, tag, writer, n_branches=2, n_levels=2):
             imgs[j].permute(1, 2, 0),
             bboxs=[bbox[j] for bbox in bboxes],
             clrs=clrs, #['y', 'y', 'r', 'r', 'r', 'r'],
-            lws=[5] * length #att[j, 1:] * length
+            lws=[5] * length, #att[j, 1:] * length
+            title='%d/%d' % (y_pred[j], y[j]),
         )
         for k in range(length):
             # TODO titled with accuracy
