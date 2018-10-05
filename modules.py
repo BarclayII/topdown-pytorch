@@ -139,6 +139,29 @@ class CommNet(nn.Module):
             ], 1)
         return self.net_g(hs).view(*shape[:-1], self.n_branches * self.g_dims)
 
+class ReconstructionModule(nn.Module):
+    def __init__(self, in_channel=256, filters=[64, 3], kernel_sizes=[4, 4], strides=[2, 2], paddings=[1, 1]):
+        ''' 
+        For now we not consider the easiest case (mnistLEGO cluttered)
+        '''
+        super(ReconstructionModule, self).__init__()
+        decoder_list = []
+        n = len(filters)
+        for lvl, (out_channel, kernel_size, stride, padding) in enumerate(zip(filters, kernel_sizes, strides, paddings)):
+            decoder_list.append(
+                nn.ConvTranspose2d(in_channel, out_channel, kernel_size, stride, padding, bias=False)
+            )
+            if lvl != n - 1:
+                decoder_list.append(nn.BatchNorm2d(out_channel))
+                decoder_list.append(nn.ReLU(True))
+                in_channel = out_channel
+        decoder_list.append(nn.Tanh())
+        self.decoder = nn.Sequential(*decoder_list)
+        self.loss = nn.MSELoss()
+
+    def forward(self, fm):
+        return self.decoder(fm)
+
 class WhatModule(nn.Module):
     def __init__(self, filters, kernel_size, final_pool_size, h_dims, n_classes, cnn=None, in_dims=None, fix=False):
         super(WhatModule, self).__init__()
@@ -250,7 +273,6 @@ class GlimpseUpdater(nn.Module):
         delta_b = self.glimpse.rescale(delta_b)
         new_b = self.glimpse.upd_b(b.unsqueeze(2).repeat(1, 1, self.n_branches, 1), delta_b)
         return new_b
-
 
 class TreeItem(dict):
     def __init__(self, *args, **kwargs):
@@ -381,6 +403,11 @@ class TreeBuilder(nn.Module):
                 for _ in range(n_levels + 1)
                 )
 
+        net_recon = nn.ModuleList(
+            ReconstructionModule()
+            for _ in range(n_levels + 1)
+        )
+
         net_h = InverseGlimpse(glimpse_fm, fm_target_size)
         upd_b = GlimpseUpdater(
                 glimpse,
@@ -392,6 +419,7 @@ class TreeBuilder(nn.Module):
                 )
 
         self.net_phi = net_phi
+        self.net_recon = net_recon
         self.net_h = net_h
         self.upd_b = upd_b
         self.glimpse = glimpse
@@ -408,24 +436,6 @@ class TreeBuilder(nn.Module):
         for reg_cls, reg_coef in regularizer_classes.items():
             self.regs.append(reg_cls(reg_coef, self))
 
-    '''
-    def forward_layer(self, x, l, b):
-        batch_size = x.shape[0]
-        x_g = self.glimpse(x, b)
-        n_glimpses = x_g.shape[1]
-        x_g_flat = x_g.view(batch_size * n_glimpses, *x_g.shape[2:])
-        fm = self.net_phi[l](x_g_flat)
-        fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
-        abs_b = self.glimpse_fm._to_absolute_attention(b, self.fm_target_size)
-        fm_new, fm_alpha = F_spatial_feature_map(fm, abs_b, self.fm_target_size)
-        delta_b = self.net_b[l](
-                fm.detach().view(batch_size, n_glimpses, -1)
-        ).view(batch_size, n_glimpses, self.n_branches, self.g_dims)
-        delta_b = self.glimpse.rescale(delta_b)
-        new_b = self.glimpse.upd_b(b.unsqueeze(2).repeat(1, 1, self.n_branches, 1), delta_b)
-        return x_g, new_b, fm_new, fm_alpha
-    '''
-
     def forward_layer(self, x, l, b):
         batch_size = x.shape[0]
         x_g = self.glimpse(x, b)
@@ -436,12 +446,19 @@ class TreeBuilder(nn.Module):
         else:
             phi = self.net_phi[l]
         fm = phi(x_g_flat)
+        if self.share:
+            recon = self.net_recon[0]
+        else:
+            recon = self.net_recon[l]
+        x_recon = recon(fm)
+        loss_recon = F.mse_loss(x_recon.view(-1), x_g.view(-1).detach())
+
         fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
         h = self.net_h(fm, b)
         new_b = None
         if l < self.n_levels:
             new_b = self.upd_b(b, fm, l)
-        return x_g, new_b, h
+        return x_g, new_b, h, loss_recon
 
     def forward(self, x, lvl=None):
         batch_size, channels, row, col = x.shape
@@ -455,10 +472,12 @@ class TreeBuilder(nn.Module):
         t[0].b[:, 2:4] = 1
         t[0].b[:, 4:] = 0.5
 
+        loss_recon_total = 0
         for l in range(0, lvl + 1):
             current_level = noderange(self.n_branches, l)
             b = T.stack([t[i].b for i in current_level], 1)
-            g, new_b, h = self.forward_layer(x, l, b)
+            g, new_b, h, loss_recon = self.forward_layer(x, l, b)
+            loss_recon_total += loss_recon
             # propagate
             for k, i in enumerate(current_level):
                 t[i].g = list_index_select(g, (slice(None), k))
@@ -470,7 +489,7 @@ class TreeBuilder(nn.Module):
                         t[i * self.n_branches + j + 1].b = list_index_select(
                                 new_b, (slice(None), k, j))
 
-        regularizer_losses = [r(t, row, col, lvl) for r in self.regs]
+        regularizer_losses = [r(t, row, col, lvl) for r in self.regs] + [loss_recon_total]
 
         return t, regularizer_losses
 
@@ -571,7 +590,7 @@ class AlphaChannelReadoutModule(ReadoutModule):
                 net_pred = self.predictor[lvl]
             results.append(net_pred(h))
             hs.append(h)
-            fm_accum.detach_()
+#            fm_accum.detach_()
 
         self.hs = hs
         return results

@@ -33,7 +33,7 @@ parser.add_argument('--imagenet_valid_sel', default='selected-val.pkl', type=str
 parser.add_argument('--glm_size', default=12, type=int)
 parser.add_argument('--explore', action='store_true', help='indicates whether to enable explore or not')
 parser.add_argument('--bind', action='store_true', help='indicates whether to bind dx/sx, dy/sy or not')
-parser.add_argument('--readout', default='unlinear', type=str)
+parser.add_argument('--readout', default='maxgated', type=str)
 parser.add_argument('--num_workers', default=0, type=int)
 parser.add_argument('--n_gpus', default=1, type=int)
 parser.add_argument('--fix', action='store_true')

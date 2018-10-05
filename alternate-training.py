@@ -1,10 +1,7 @@
 """
 TODO's:
-1. Scheduler
-2. Accelerate Nearest Neighbors (Currently we make it an option in argparse)
-3. Visualization of CNN feature maps
-4. Levelwise early stop
-5. Failure cases
+1. visualize reconstruction
+2. refactor reconstruction
 """
 
 import torch as T
@@ -132,6 +129,7 @@ def train():
             'cc': 0.,
             'ce': 0,
             'res': 0,
+            'rec': 0,
         }
         hit = 0
         cnt = 0
@@ -151,13 +149,14 @@ def train():
 
                 total_loss = 0
 
-                t, (loss_pc, loss_cc, loss_res) = builder(x_in, levels)
+                t, (loss_pc, loss_cc, loss_res, loss_rec) = builder(x_in, levels)
                 loss_pc = loss_pc.mean()
                 loss_cc = loss_cc.mean()
                 loss_res = loss_res.mean()
                 train_loss_dict['pc'] += loss_pc.item()
                 train_loss_dict['cc'] += loss_cc.item()
                 train_loss_dict['res'] += loss_res.item()
+                train_loss_dict['rec'] += loss_rec.item()
                 readout_list = readout(t, levels)
 
                 total_loss = loss_pc + loss_cc + loss_res

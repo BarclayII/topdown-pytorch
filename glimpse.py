@@ -14,6 +14,42 @@ def binverse(x):
     x_inv, _ = T.gesv(eye, x)
     return x_inv
 
+def gaussian_masks_raw(c, d, s, len_, glim_len):
+    '''
+    c, d, s: 2D Tensor (batch_size, n_glims)
+    len_, glim_len: int
+    returns: 4D Tensor (batch_size, n_glims, glim_len, len_)
+        each row is a 1D Gaussian
+    '''
+    global _R, _C
+    batch_size, n_glims = c.size()
+    dev = c.device
+
+    # The original HART code did not shift the coordinates by
+    # glim_len / 2.  The generated Gaussian attention does not
+    # correspond to the actual crop of the bbox.
+    # Possibly a bug?
+    if (glim_len, dev) not in _R:
+        _R[glim_len, dev] = T.arange(0, glim_len).to(c).float().view(1, 1, 1, -1) - glim_len / 2
+    if (len_, dev) not in _C:
+        _C[len_, dev] = T.arange(0, len_).to(c).float().view(1, 1, -1, 1)
+    R = _R[glim_len, dev]
+    C = _C[len_, dev]
+    C = C.expand(batch_size, n_glims, len_, 1)
+    c = c[:, :, None, None]
+    d = d[:, :, None, None]
+    s = s[:, :, None, None]
+
+    cr = c + R * d
+    #sr = tovar(T.ones(cr.size())) * s
+    sr = s
+
+    mask = C - cr
+    mask = (-0.5 * (mask / sr) ** 2)
+    mask = mask.exp()
+    return mask
+
+
 #@profile
 def gaussian_masks(c, d, s, len_, glim_len):
     '''
@@ -48,8 +84,31 @@ def gaussian_masks(c, d, s, len_, glim_len):
     mask = C - cr
     mask = (-0.5 * (mask / sr) ** 2)
     mask = mask.exp()
-    mask = mask / (mask.sum(2, keepdim=True) + 1e-8)  # / (s * np.sqrt(2 * np.pi) + 1e-8)
+    mask = mask / (mask.sum(2, keepdim=True) + 1e-4)
     return mask
+
+def upsampling_masks(c, d, s, glim_len, len_):
+    '''
+    c, d, s: 2D Tensor (batch_size, n_glims)
+    len_, target_len: int
+    returns: 4D Tensor (batch_size, n_glims, target_len, len_)
+    '''
+    global _R, _C
+    batch_size, n_glims = c.size()
+    dev = c.device
+
+    if (glim_len, dev) not in _R:
+        _R[glim_len, dev] = T.arange(0, glim_len).to(c).float().view(1, 1, 1, -1) - glim_len / 2
+    if (len_, dev) not in _C:
+        _C[len_, dev] = T.arange(0, len_).to(c).float().view(1, 1, -1, 1)
+    R = _R[glim_len, dev]
+    C = _C[len_, dev]
+    C = C.expand(batch_size, n_glims, len_, 1)
+    c = c[:, :, None, None]
+    d = d[:, :, None, None]
+    cr = c + R * d
+    mask = (C - cr) / d
+    return ((mask ** 2) <= 0.25).float().transpose(-1, -2)
 
 def inverse_gaussian_masks_surrogate(c, d, s, len_, target_len):
     '''
@@ -58,9 +117,9 @@ def inverse_gaussian_masks_surrogate(c, d, s, len_, target_len):
     returns: 4D Tensor (batch_size, n_glims, target_len, len_)
         each row is a 1D Gaussian
     '''
-    mask = gaussian_masks(c, d, s, target_len, len_)
+    mask = gaussian_masks_raw(c, d, s, target_len, len_)
     mask_T = mask.transpose(-1, -2)
-    mask_inv = mask_T / (mask_T.sum(2, keepdim=True) + 1e-8)
+    mask_inv = mask_T# / mask_T.sum(2, keepdim=True).clamp_(min=1)
     return mask_inv
 
 def inverse_gaussian_masks(c, d, s, len_, target_len):
@@ -145,11 +204,11 @@ class GaussianGlimpse(NN.Module):
         dx = T.sigmoid(b[..., 2]) + noise_dx
         dy = T.sigmoid(b[..., 3]) + noise_dy
         if self.bind:
-            sx = dx
-            sy = dy
+            sx = dx / 2
+            sy = dy / 2
         else:
-            sx = T.sigmoid(b[..., 4]) + noise_sx
-            sy = T.sigmoid(b[..., 5]) + noise_sy
+            sx = T.sigmoid(b[..., 4]) / 2 + noise_sx
+            sy = T.sigmoid(b[..., 5]) / 2 + noise_sy
         return T.stack([cx, cy, dx, dy, sx, sy], dim=-1)
 
     @classmethod
@@ -216,7 +275,7 @@ class GaussianGlimpse(NN.Module):
 
     def att_to_bbox(self, spatial_att, x_size):
         '''
-        spatial_att: (..., 6) [cx, cy, dx, dy, sx, sy] relative scales ]0, 1[
+        spatial_att: (..., 6) [cx, cy, dx, dy, sx, sy] relative scales [0, 1]
         return: (..., 4) [cx, cy, w, h] absolute scales
         '''
         cx = spatial_att[..., 0] * x_size[1]
@@ -229,7 +288,7 @@ class GaussianGlimpse(NN.Module):
     def bbox_to_att(self, bbox, x_size):
         '''
         bbox: (..., 4) [cx, cy, w, h] absolute scales
-        return: (..., 6) [cx, cy, dx, dy, sx, sy] relative scales ]0, 1[
+        return: (..., 6) [cx, cy, dx, dy, sx, sy] relative scales [0, 1]
         '''
         cx = bbox[..., 0] / x_size[1]
         cy = bbox[..., 1] / x_size[0]
@@ -243,7 +302,7 @@ class GaussianGlimpse(NN.Module):
 
     def _to_axis_attention(self, image_len, glim_len, c, d, s):
         c = c * image_len
-        d = d * (image_len - 1 + 1e-5) / (glim_len - 1 + 1e-5)
+        d = d * (image_len - 1) / (glim_len - 1)
         s = (s + 1e-5) * image_len / glim_len
         return c, d, s
 
