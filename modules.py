@@ -451,7 +451,7 @@ class TreeBuilder(nn.Module):
         else:
             recon = self.net_recon[l]
         x_recon = recon(fm)
-        loss_recon = F.mse_loss(x_recon.view(-1), x_g.view(-1).detach())
+        loss_recon = F.l1_loss(x_recon.view(-1), x_g.view(-1).detach())
 
         fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
         h = self.net_h(fm, b)

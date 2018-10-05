@@ -159,7 +159,7 @@ def train():
                 train_loss_dict['rec'] += loss_rec.item()
                 readout_list = readout(t, levels)
 
-                total_loss = loss_pc + loss_cc + loss_res
+                total_loss = loss_pc + loss_cc + loss_res + loss_rec
                 for lvl in range(readout_start_lvl, levels + 1):
                     y_pred  = readout_list[lvl]
                     y_pred_cls = y_pred.max(dim=-1)[1]
