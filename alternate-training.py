@@ -149,18 +149,16 @@ def train():
 
                 total_loss = 0
 
-                t, (loss_pc, loss_cc, loss_res, loss_rec) = builder(x_in, levels)
-                loss_rec *= args.rec_coef
+                t, (loss_pc, loss_cc, loss_res), loss_rec_arr = builder(x_in, levels)
                 loss_pc = loss_pc.mean()
                 loss_cc = loss_cc.mean()
                 loss_res = loss_res.mean()
                 train_loss_dict['pc'] += loss_pc.item()
                 train_loss_dict['cc'] += loss_cc.item()
                 train_loss_dict['res'] += loss_res.item()
-                train_loss_dict['rec'] += loss_rec.item()
                 readout_list = readout(t, levels)
 
-                total_loss = loss_pc + loss_cc + loss_res + loss_rec
+                total_loss = loss_pc + loss_cc + loss_res
                 for lvl in range(readout_start_lvl, levels + 1):
                     y_pred  = readout_list[lvl]
                     y_pred_cls = y_pred.max(dim=-1)[1]
@@ -168,7 +166,10 @@ def train():
                     loss_ce = F.cross_entropy(y_pred, y) * coef_lvl[lvl]
                     train_loss_dict['ce'] += loss_ce.item()
                     levelwise_loss[lvl] += loss_ce.item()
-                    loss = loss_ce
+                    loss_rec = loss_rec_arr[lvl] * coef_lvl[lvl] * args.rec_coef
+                    train_loss_dict['rec'] += loss_rec.item()
+
+                    loss = loss_ce + loss_rec
 
                     y_score_last = y_score
 
@@ -236,7 +237,7 @@ def train():
                 x_in = normalize(x)
 
                 total_loss = 0
-                t, _ = builder(x_in, levels)
+                t, _, _ = builder(x_in, levels)
                 readout_list = readout(t, levels)
 
                 for lvl in range(readout_start_lvl, levels + 1):
@@ -291,7 +292,7 @@ def train():
                             print(x.shape, y.shape, file=logfile)
                             x_in = normalize(x)
 
-                            t, _ = builder(x_in, levels)
+                            t, _, _ = builder(x_in, levels)
                             readout_list = readout(t, levels)
                             bbox_scaler = T.FloatTensor([[x.shape[3], x.shape[2], x.shape[3], x.shape[2]]]).to(x)
                             sample_bboxs = [

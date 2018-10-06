@@ -472,28 +472,27 @@ class TreeBuilder(nn.Module):
         t[0].b[:, 2:4] = 1
         t[0].b[:, 4:] = 0.5
 
-        loss_recon_total = 0
+        loss_recon_arr = []
         for l in range(0, lvl + 1):
             current_level = noderange(self.n_branches, l)
             b = T.stack([t[i].b for i in current_level], 1)
             g, new_b, h, loss_recon, x_recon = self.forward_layer(x, l, b)
-            if l == lvl:
-                loss_recon_total += loss_recon
+            loss_recon_arr.append(loss_recon)
             # propagate
             for k, i in enumerate(current_level):
-                t[i].recon = list_index_select(x_recon, (slice(None), k))
-                t[i].g = list_index_select(g, (slice(None), k))
                 # If we are using inverse glimpse, each h contains a tuple (fm, alpha)
                 t[i].h = list_index_select(h, (slice(None), k))
+                t[i].recon = list_index_select(x_recon, (slice(None), k))
+                t[i].g = list_index_select(g, (slice(None), k))
 
                 if l != lvl:
                     for j in range(self.n_branches):
                         t[i * self.n_branches + j + 1].b = list_index_select(
                                 new_b, (slice(None), k, j))
 
-        regularizer_losses = [r(t, row, col, lvl) for r in self.regs] + [loss_recon_total]
+        regularizer_losses = [r(t, row, col, lvl) for r in self.regs]
 
-        return t, regularizer_losses
+        return t, regularizer_losses, loss_recon_arr
 
 class ReadoutModule(nn.Module):
     def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1, share=False):
