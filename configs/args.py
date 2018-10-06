@@ -16,7 +16,8 @@ parser.add_argument('--nearest', action='store_true', help='indicates whether to
 # PC coef is not necessary when using relative position. The coefficient is set to 0 by default.
 parser.add_argument('--pc_coef', default=0, type=float, help='regularization parameter(parent-child)')
 parser.add_argument('--cc_coef', default=0, type=float, help='regularization parameter(child-child)')
-parser.add_argument('--res_coef', default=1, type=float, help='coefficient for resolution loss')
+parser.add_argument('--res_coef', default=0, type=float, help='coefficient for resolution loss')
+parser.add_argument('--rec_coef', default=0, type=float, help='coefficient for reconstruction')
 parser.add_argument('--branches', default=2, type=int, help='branches')
 parser.add_argument('--levels', default=2, type=int, help='levels')
 parser.add_argument('--levels_from', default=2, type=int, help='levels from')

@@ -155,9 +155,9 @@ class ReconstructionModule(nn.Module):
                 decoder_list.append(nn.BatchNorm2d(out_channel))
                 decoder_list.append(nn.ReLU(True))
                 in_channel = out_channel
-        decoder_list.append(nn.Tanh())
+        # decoder_list.append(nn.Sigmoid())
+        # decoder_list.append(nn.Tanh())
         self.decoder = nn.Sequential(*decoder_list)
-        self.loss = nn.MSELoss()
 
     def forward(self, fm):
         return self.decoder(fm)
@@ -277,7 +277,7 @@ class GlimpseUpdater(nn.Module):
 class TreeItem(dict):
     def __init__(self, *args, **kwargs):
         dict.__init__(self, *args, **kwargs)
-        self._attrs = ['b', 'h', 'y', 'g', 'alpha']
+        self._attrs = ['b', 'h', 'y', 'g', 'alpha', 'recon']
 
     def __getattr__(self, name):
         if not name.startswith('_') and name in self._attrs:
@@ -458,7 +458,7 @@ class TreeBuilder(nn.Module):
         new_b = None
         if l < self.n_levels:
             new_b = self.upd_b(b, fm, l)
-        return x_g, new_b, h, loss_recon
+        return x_g, new_b, h, loss_recon, x_recon.view_as(x_g)
 
     def forward(self, x, lvl=None):
         batch_size, channels, row, col = x.shape
@@ -476,10 +476,12 @@ class TreeBuilder(nn.Module):
         for l in range(0, lvl + 1):
             current_level = noderange(self.n_branches, l)
             b = T.stack([t[i].b for i in current_level], 1)
-            g, new_b, h, loss_recon = self.forward_layer(x, l, b)
-            loss_recon_total += loss_recon
+            g, new_b, h, loss_recon, x_recon = self.forward_layer(x, l, b)
+            if l == lvl:
+                loss_recon_total += loss_recon
             # propagate
             for k, i in enumerate(current_level):
+                t[i].recon = list_index_select(x_recon, (slice(None), k))
                 t[i].g = list_index_select(g, (slice(None), k))
                 # If we are using inverse glimpse, each h contains a tuple (fm, alpha)
                 t[i].h = list_index_select(h, (slice(None), k))

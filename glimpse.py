@@ -14,42 +14,6 @@ def binverse(x):
     x_inv, _ = T.gesv(eye, x)
     return x_inv
 
-def gaussian_masks_raw(c, d, s, len_, glim_len):
-    '''
-    c, d, s: 2D Tensor (batch_size, n_glims)
-    len_, glim_len: int
-    returns: 4D Tensor (batch_size, n_glims, glim_len, len_)
-        each row is a 1D Gaussian
-    '''
-    global _R, _C
-    batch_size, n_glims = c.size()
-    dev = c.device
-
-    # The original HART code did not shift the coordinates by
-    # glim_len / 2.  The generated Gaussian attention does not
-    # correspond to the actual crop of the bbox.
-    # Possibly a bug?
-    if (glim_len, dev) not in _R:
-        _R[glim_len, dev] = T.arange(0, glim_len).to(c).float().view(1, 1, 1, -1) - glim_len / 2
-    if (len_, dev) not in _C:
-        _C[len_, dev] = T.arange(0, len_).to(c).float().view(1, 1, -1, 1)
-    R = _R[glim_len, dev]
-    C = _C[len_, dev]
-    C = C.expand(batch_size, n_glims, len_, 1)
-    c = c[:, :, None, None]
-    d = d[:, :, None, None]
-    s = s[:, :, None, None]
-
-    cr = c + R * d
-    #sr = tovar(T.ones(cr.size())) * s
-    sr = s
-
-    mask = C - cr
-    mask = (-0.5 * (mask / sr) ** 2)
-    mask = mask.exp()
-    return mask
-
-
 #@profile
 def gaussian_masks(c, d, s, len_, glim_len):
     '''
@@ -117,9 +81,9 @@ def inverse_gaussian_masks_surrogate(c, d, s, len_, target_len):
     returns: 4D Tensor (batch_size, n_glims, target_len, len_)
         each row is a 1D Gaussian
     '''
-    mask = gaussian_masks_raw(c, d, s, target_len, len_)
+    mask = gaussian_masks(c, d, s, target_len, len_)
     mask_T = mask.transpose(-1, -2)
-    mask_inv = mask_T# / mask_T.sum(2, keepdim=True).clamp_(min=1)
+    mask_inv = mask_T / (mask_T.sum(2, keepdim=True) + 1e-4)
     return mask_inv
 
 def inverse_gaussian_masks(c, d, s, len_, target_len):

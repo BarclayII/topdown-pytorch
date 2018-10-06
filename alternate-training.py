@@ -150,6 +150,7 @@ def train():
                 total_loss = 0
 
                 t, (loss_pc, loss_cc, loss_res, loss_rec) = builder(x_in, levels)
+                loss_rec *= args.rec_coef
                 loss_pc = loss_pc.mean()
                 loss_cc = loss_cc.mean()
                 loss_res = loss_res.mean()
@@ -193,7 +194,13 @@ def train():
                             ]
                     sample_g_arr = [
                         normalize_inverse(t[_].g[:10].detach()) for _ in range(length)]
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, 'train', writer,
+                    sample_alpha_arr = [
+                        t[_].h[1][:10].detach() for _ in range(length)
+                    ]
+                    sample_recon_arr = [
+                        t[_].recon[:10].detach() for _ in range(length)
+                    ]
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_alpha_arr, sample_recon_arr, 'train', writer,
                             y_pred_cls, y,
                             n_branches=n_branches, n_levels=n_levels)
 
@@ -257,8 +264,13 @@ def train():
                             ]
                     sample_g_arr = [
                         normalize_inverse(t[_].g[:10]) for _ in range(length)]
-
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, 'valid', writer,
+                    sample_alpha_arr = [
+                        t[_].h[1][:10].detach() for _ in range(length)
+                    ]
+                    sample_recon_arr = [
+                        t[_].recon[:10].detach() for _ in range(length)
+                    ]
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_alpha_arr, sample_recon_arr, 'valid', writer,
                             y_pred_cls, y,
                             n_branches=n_branches, n_levels=levels)
 

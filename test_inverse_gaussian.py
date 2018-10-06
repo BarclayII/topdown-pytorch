@@ -15,7 +15,7 @@ plt.axis('off')
 plt.tight_layout()
 plt.show()
 
-glm = glimpse.GaussianGlimpse((50, 50))
+glm = glimpse.GaussianGlimpse((3, 3))
 
 a_rel = torch.FloatTensor([[0.5, 0.5, 1, 1, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5, 0.25, 0.25]]).requires_grad_()
 a = glm._to_absolute_attention(a_rel[None], x.shape[-2:])
@@ -23,14 +23,14 @@ a = glm._to_absolute_attention(a_rel[None], x.shape[-2:])
 cx, cy, dx, dy, sx, sy = torch.unbind(a, -1)
 batch_size, n_glims, _ = a.size()
 _, nchannels, nrows, ncols = x.size()
-n_glim_rows, n_glim_cols = 50, 50
+n_glim_rows, n_glim_cols = 3, 3
 Fy = glimpse.gaussian_masks(cy, dy, sy, nrows, n_glim_rows)
-#Fy_inv = glimpse.inverse_gaussian_masks_surrogate(cy, dy, sy, n_glim_rows, nrows)
-Fy_inv = glimpse.upsampling_masks(cy, dy, sy, n_glim_rows, nrows)
+Fy_inv = glimpse.inverse_gaussian_masks_surrogate(cy, dy, sy, n_glim_rows, nrows)
+#Fy_inv = glimpse.upsampling_masks(cy, dy, sy, n_glim_rows, nrows)
 
 Fx = glimpse.gaussian_masks(cx, dx, sx, ncols, n_glim_cols)
-#Fx_inv = glimpse.inverse_gaussian_masks_surrogate(cx, dx, sx, n_glim_cols, ncols)
-Fx_inv = glimpse.upsampling_masks(cx, dx, sx, n_glim_cols, ncols)
+Fx_inv = glimpse.inverse_gaussian_masks_surrogate(cx, dx, sx, n_glim_cols, ncols)
+#Fx_inv = glimpse.upsampling_masks(cx, dx, sx, n_glim_cols, ncols)
 
 plt.imshow(Fy[0, 1].detach())
 plt.show()
