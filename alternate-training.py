@@ -352,7 +352,7 @@ def train():
                         x_in = normalize(x)
 
                         total_loss = 0
-                        t, _ = builder(x_in, levels)
+                        t, _, _ = builder(x_in, levels)
                         readout_list = readout(t, levels)
 
                         for lvl in range(readout_start_lvl, levels + 1):
