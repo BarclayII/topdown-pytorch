@@ -20,9 +20,9 @@ def F_spatial_feature_map(x, absolute_att, target_fm_shape):
 
     # with T.no_grad():
     # (batch_size, n_glims, rows, target_rows)
-    Fy_inv = upsampling_masks(cy, dy, sy, rows, target_rows).detach()
+    Fy_inv = upsampling_masks(cy, dy, sy, rows, target_rows)
     # (batch_size, n_glims, cols, target_cols)
-    Fx_inv = upsampling_masks(cx, dx, sx, cols, target_cols).detach()
+    Fx_inv = upsampling_masks(cx, dx, sx, cols, target_cols)
 
     # (batch_size, n_glims, 1, rows, target_rows)
     Fy_inv = Fy_inv.unsqueeze(2)
@@ -37,4 +37,4 @@ def F_spatial_feature_map(x, absolute_att, target_fm_shape):
 
     # (batch_size, n_glims, n_channels, target_rows, target_cols)
     spatial_fm = Fy_inv.transpose(-1, -2) @ x @ Fx_inv
-    return spatial_fm[:, :, :-1, ...], spatial_fm[:, :, -1:, ...]
+    return spatial_fm[:, :, :-1, ...], spatial_fm[:, :, -1:, ...].clamp_(max=1.0)

@@ -97,7 +97,7 @@ def build_cnn(**config):
         cnn_list.append(nn.BatchNorm2d(filters[i]))
         if i < len(filters) - 1:
             cnn_list.append(nn.LeakyReLU())
-    cnn_list.append(nn.AdaptiveMaxPool2d(final_pool_size))
+    cnn_list.append(nn.AdaptiveAvgPool2d(final_pool_size))
 
     return nn.Sequential(*cnn_list)
 
@@ -196,19 +196,31 @@ class WhatModule(nn.Module):
         batch_size = glimpse_kxk.shape[0]
         if self.fix:
             with T.no_grad():
-                fm = self.cnn(glimpse_kxk) #self.norm(self.cnn(glimpse_kxk))
+                fm = self.cnn(glimpse_kxk)
         else:
-            fm = self.cnn(glimpse_kxk) #self.norm(self.cnn(glimpse_kxk))
+            fm = self.cnn(glimpse_kxk)
         return fm
 
 class InverseGlimpse(nn.Module):
-    def __init__(self, glimpse_fm, fm_target_size):
+    def __init__(self, glimpse_fm, final_pool_size, fm_target_size):
         super(InverseGlimpse, self).__init__()
         self.glimpse_fm = glimpse_fm
         self.fm_target_size = fm_target_size
+        self.final_pool_size = final_pool_size
+
+    def resize(self, abs_b):
+        cx, cy, dx, dy, sx, sy = T.unbind(abs_b, -1)
+        return T.stack([
+            cx * self.fm_target_size[1],
+            cy * self.fm_target_size[0],
+            dx * self.fm_target_size[1] / self.final_pool_size[1],
+            dy * self.fm_target_size[0] / self.final_pool_size[0],
+            sx * self.fm_target_size[1] / self.final_pool_size[1],
+            sy * self.fm_target_size[0] / self.final_pool_size[0],
+        ], -1)
 
     def forward(self, fm, b):
-        abs_b = self.glimpse_fm._to_absolute_attention(b, self.fm_target_size)
+        abs_b = self.resize(b)
         fm_new, fm_alpha = F_spatial_feature_map(fm, abs_b, self.fm_target_size)
         return fm_new, fm_alpha
 
@@ -242,8 +254,8 @@ class GlimpseUpdater(nn.Module):
     def __init__(self, glimpse, input_dims, h_dims, g_dims, n_branches, n_levels):
         super(GlimpseUpdater, self).__init__()
         self.glimpse = glimpse
-        """
-        net_b = nn.ModuleList(
+
+        self.net_b = nn.ModuleList(
                 nn.Sequential(
                     nn.Linear(input_dims, h_dims),
                     nn.ReLU(),
@@ -252,14 +264,14 @@ class GlimpseUpdater(nn.Module):
                     nn.Linear(h_dims, g_dims * n_branches),
                     )
                 for _ in range(n_levels + 1)
-                )
+        )
         """
         self.net_b = nn.ModuleList(
             #CommNet(2, n_branches, input_dims, h_dims, g_dims)
             SequentialGlimpse(input_dims, h_dims, g_dims, n_branches)
             for _ in range(n_levels + 1)
         )
-
+        """
         self.n_branches = n_branches
         self.g_dims = g_dims
 
@@ -269,6 +281,7 @@ class GlimpseUpdater(nn.Module):
         batch_size, n_glimpses = fm.shape[:2]
         delta_b = self.net_b[l](
                 fm.detach().view(batch_size, n_glimpses, -1)
+                #fm.view(batch_size, n_glimpses, -1)
         ).view(batch_size, n_glimpses, self.n_branches, self.g_dims)
         delta_b = self.glimpse.rescale(delta_b)
         new_b = self.glimpse.upd_b(b.unsqueeze(2).repeat(1, 1, self.n_branches, 1), delta_b)
@@ -393,7 +406,7 @@ class TreeBuilder(nn.Module):
 
         fm_glim_size = final_pool_size
         glimpse = create_glimpse(glimpse_type, glimpse_size, explore=explore, bind=bind)
-        glimpse_fm = create_glimpse(glimpse_type, final_pool_size) #fm_glim_size)
+        #glimpse_fm = create_glimpse(glimpse_type, final_pool_size) #fm_glim_size)
         g_dims = glimpse.att_params
 
         net_phi = nn.ModuleList(
@@ -408,7 +421,7 @@ class TreeBuilder(nn.Module):
             for _ in range(n_levels + 1)
         )
 
-        net_h = InverseGlimpse(glimpse_fm, fm_target_size)
+        net_h = InverseGlimpse(glimpse, final_pool_size, fm_target_size)
         upd_b = GlimpseUpdater(
                 glimpse,
                 final_n_channels * np.prod(final_pool_size),
@@ -423,7 +436,6 @@ class TreeBuilder(nn.Module):
         self.net_h = net_h
         self.upd_b = upd_b
         self.glimpse = glimpse
-        self.glimpse_fm = glimpse_fm
         self.n_branches = n_branches
         self.n_levels = n_levels
         self.g_dims = g_dims
@@ -450,15 +462,15 @@ class TreeBuilder(nn.Module):
             recon = self.net_recon[0]
         else:
             recon = self.net_recon[l]
-        x_recon = recon(fm)
-        loss_recon = F.l1_loss(x_recon.view(-1), x_g.view(-1).detach())
+        #x_recon = recon(fm)
+        #loss_recon = F.l1_loss(x_recon.view(-1), x_g.view(-1).detach())
 
         fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
         h = self.net_h(fm, b)
         new_b = None
         if l < self.n_levels:
             new_b = self.upd_b(b, fm, l)
-        return x_g, new_b, h, loss_recon, x_recon.view_as(x_g)
+        return x_g, new_b, h, 0, x_g #loss_recon, x_recon.view_as(x_g)
 
     def forward(self, x, lvl=None):
         batch_size, channels, row, col = x.shape
@@ -591,7 +603,7 @@ class AlphaChannelReadoutModule(ReadoutModule):
                 net_pred = self.predictor[lvl]
             results.append(net_pred(h))
             hs.append(h)
-#            fm_accum.detach_()
+            fm_accum.detach_()
 
         self.hs = hs
         return results

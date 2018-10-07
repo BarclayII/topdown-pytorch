@@ -167,7 +167,7 @@ def train():
                     train_loss_dict['ce'] += loss_ce.item()
                     levelwise_loss[lvl] += loss_ce.item()
                     loss_rec = loss_rec_arr[lvl] * coef_lvl[lvl] * args.rec_coef
-                    train_loss_dict['rec'] += loss_rec.item()
+                    train_loss_dict['rec'] += 0 #loss_rec.item()
 
                     loss = loss_ce + loss_rec
 

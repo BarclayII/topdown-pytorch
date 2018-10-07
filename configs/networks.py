@@ -20,8 +20,8 @@ def _cifar10_cnn():
 
 NETWORK_PARAMS = {
     'mnistcluttered': {
-        'fm_target_size': (15, 15),
-        'final_pool_size': (3, 3),
+        'fm_target_size': (12, 12),
+        'final_pool_size': (2, 2),
         'final_n_channels': 256,
         'n_classes': 10 ** args.n_digits,
         'cnn': None,
@@ -30,8 +30,8 @@ NETWORK_PARAMS = {
         'normalize_inverse': 'identity',
     },
     'mnistmulti': {
-        'fm_target_size': (15, 15),
-        'final_pool_size': (3, 3),
+        'fm_target_size': (12, 12),
+        'final_pool_size': (2, 2),
         'final_n_channels': 256,
         'n_classes': 10 ** args.n_digits,
         'cnn': None,

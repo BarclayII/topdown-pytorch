@@ -19,6 +19,7 @@ glm = glimpse.GaussianGlimpse((3, 3))
 
 a_rel = torch.FloatTensor([[0.5, 0.5, 1, 1, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5, 0.25, 0.25]]).requires_grad_()
 a = glm._to_absolute_attention(a_rel[None], x.shape[-2:])
+print(a)
 
 cx, cy, dx, dy, sx, sy = torch.unbind(a, -1)
 batch_size, n_glims, _ = a.size()

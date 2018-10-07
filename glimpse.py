@@ -31,7 +31,7 @@ def gaussian_masks(c, d, s, len_, glim_len):
     # correspond to the actual crop of the bbox.
     # Possibly a bug?
     if (glim_len, dev) not in _R:
-        _R[glim_len, dev] = T.arange(0, glim_len).to(c).float().view(1, 1, 1, -1) - glim_len / 2
+        _R[glim_len, dev] = T.arange(0, glim_len).to(c).float().view(1, 1, 1, -1) - (glim_len - 1) / 2
     if (len_, dev) not in _C:
         _C[len_, dev] = T.arange(0, len_).to(c).float().view(1, 1, -1, 1)
     R = _R[glim_len, dev]
@@ -60,9 +60,8 @@ def upsampling_masks(c, d, s, glim_len, len_):
     global _R, _C
     batch_size, n_glims = c.size()
     dev = c.device
-
     if (glim_len, dev) not in _R:
-        _R[glim_len, dev] = T.arange(0, glim_len).to(c).float().view(1, 1, 1, -1) - glim_len / 2
+        _R[glim_len, dev] = T.arange(0, glim_len).to(c).float().view(1, 1, 1, -1) - (glim_len - 1) / 2
     if (len_, dev) not in _C:
         _C[len_, dev] = T.arange(0, len_).to(c).float().view(1, 1, -1, 1)
     R = _R[glim_len, dev]
