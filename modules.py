@@ -155,8 +155,6 @@ class ReconstructionModule(nn.Module):
                 decoder_list.append(nn.BatchNorm2d(out_channel))
                 decoder_list.append(nn.ReLU(True))
                 in_channel = out_channel
-        # decoder_list.append(nn.Sigmoid())
-        # decoder_list.append(nn.Tanh())
         self.decoder = nn.Sequential(*decoder_list)
 
     def forward(self, fm):
@@ -191,14 +189,15 @@ class WhatModule(nn.Module):
         else:
             raise NotImplementedError
         self.fix = fix
+        self.conv1x1 = nn.Conv2d(in_dims, n_classes, kernel_size=(1, 1))
 
     def forward(self, glimpse_kxk):
         batch_size = glimpse_kxk.shape[0]
         if self.fix:
             with T.no_grad():
-                fm = self.cnn(glimpse_kxk)
+                fm = self.conv1x1(self.cnn(glimpse_kxk))
         else:
-            fm = self.cnn(glimpse_kxk)
+            fm = self.conv1x1(self.cnn(glimpse_kxk))
         return fm
 
 class InverseGlimpse(nn.Module):
@@ -207,6 +206,8 @@ class InverseGlimpse(nn.Module):
         self.glimpse_fm = glimpse_fm
         self.fm_target_size = fm_target_size
         self.final_pool_size = final_pool_size
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        #self.norm = nn.InstanceNorm2d(np.prod(final_pool_size))
 
     def resize(self, abs_b):
         cx, cy, dx, dy, sx, sy = T.unbind(abs_b, -1)
@@ -221,13 +222,25 @@ class InverseGlimpse(nn.Module):
 
     def forward(self, fm, b):
         abs_b = self.resize(b)
+        score = self.avgpool(fm.view(-1, *fm.shape[-3:])).squeeze(-1).squeeze(-1)
+        #top_k = T.topk(score, 10, dim=-1)[1]
+        #fm_where = T.gather(fm, 2, top_k.re)
+        prob = F.softmax(score * 100).view(*fm.shape[:3], 1, 1).detach()
+        class_map = (prob * fm).sum(dim=2)
         fm_new, fm_alpha = F_spatial_feature_map(fm, abs_b, self.fm_target_size)
-        return fm_new, fm_alpha
+        #return fm_new, fm_alpha, class_map
+        return fm, fm_alpha, class_map
 
 class SequentialGlimpse(nn.Module):
-    def __init__(self, input_dims, h_dims, g_dims, n_branches):
+    def __init__(self, input_dims, g_dims, n_branches):
         super(SequentialGlimpse, self).__init__()
-        self.net_h = nn.Linear(input_dims, h_dims)
+        h_dims = 128
+        self.net_h = nn.Sequential(
+            nn.Linear(input_dims, h_dims),
+            nn.ReLU(),
+            nn.Linear(h_dims, h_dims),
+            nn.ReLU()
+        )
         self.rnn = nn.RNNCell(g_dims, h_dims)
         self.out = nn.Linear(h_dims, g_dims)
         self.input_dims = input_dims
@@ -238,7 +251,7 @@ class SequentialGlimpse(nn.Module):
     def forward(self, x):
         pre_shape = x.shape[:2]
         batch_size = np.prod(pre_shape)
-        h = T.tanh(self.net_h(x.view(batch_size, -1)))
+        h = self.net_h(x.view(batch_size, -1))
         input_g = h.new(batch_size, self.g_dims).zero_()
         gs = []
         for _ in range(self.n_branches):
@@ -261,13 +274,12 @@ class GlimpseUpdater(nn.Module):
         else:
             lvls = n_levels + 1
 
-        """
         self.net_b = nn.ModuleList(
                 nn.Sequential(
                     nn.Linear(input_dims, h_dims),
                     nn.ReLU(),
-                    nn.Linear(h_dims, h_dims),
-                    nn.ReLU(),
+#                    nn.Linear(h_dims, h_dims),
+#                    nn.ReLU(),
                     nn.Linear(h_dims, g_dims * n_branches),
                     )
                 for _ in range(lvls)
@@ -275,25 +287,23 @@ class GlimpseUpdater(nn.Module):
         """
 
         self.net_b = nn.ModuleList(
-            #CommNet(2, n_branches, input_dims, h_dims, g_dims)
-            SequentialGlimpse(input_dims, h_dims, g_dims, n_branches)
+            SequentialGlimpse(input_dims, g_dims, n_branches)
             for _ in range(lvls)
         )
+        """
 
         self.n_branches = n_branches
         self.g_dims = g_dims
 
-    def forward(self, b, h, l):
-        #fm, alpha = h
-        fm = h
-        batch_size, n_glimpses = fm.shape[:2]
+    def forward(self, b, class_map, l):
+        batch_size, n_glimpses = class_map.shape[:2]
         if self.share:
             net_b = self.net_b[0]
         else:
             net_b = self.net_b[l]
         delta_b = net_b(
-                fm.detach().view(batch_size, n_glimpses, -1)
-                #fm.view(batch_size, n_glimpses, -1)
+                #class_map.detach().view(batch_size, n_glimpses, -1)
+                class_map.view(batch_size, n_glimpses, -1)
         ).view(batch_size, n_glimpses, self.n_branches, self.g_dims)
         delta_b = self.glimpse.rescale(delta_b)
         new_b = self.glimpse.upd_b(b.unsqueeze(2).repeat(1, 1, self.n_branches, 1), delta_b)
@@ -437,7 +447,7 @@ class TreeBuilder(nn.Module):
         upd_b = GlimpseUpdater(
                 share,
                 glimpse,
-                final_n_channels * np.prod(final_pool_size),
+                np.prod(final_pool_size),
                 h_dims,
                 g_dims,
                 n_branches,
@@ -482,7 +492,7 @@ class TreeBuilder(nn.Module):
         h = self.net_h(fm, b)
         new_b = None
         if l < self.n_levels:
-            new_b = self.upd_b(b, fm, l)
+            new_b = self.upd_b(b, h[-1], l)
         return x_g, new_b, h, 0, x_g #loss_recon, x_recon.view_as(x_g)
 
     def forward(self, x, lvl=None):
@@ -557,7 +567,7 @@ class UnlinearReadoutModule(ReadoutModule):
         for lvl in range(lvls + 1):
             nodes = t[num_nodes(lvl - 1, self.n_branches): num_nodes(lvl, self.n_branches)]
             for node in nodes:
-                fm, alpha = node.h
+                fm, alpha, _ = node.h
                 b = node.b.detach()
                 batch_size = fm.shape[0]
                 fm = self.avgpool(fm).view(batch_size, -1)
@@ -586,14 +596,9 @@ class AlphaChannelReadoutModule(ReadoutModule):
     '''
     def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1, share=False):
         super(AlphaChannelReadoutModule, self).__init__()
-        pool_size = 1
-        self.predictor = nn.ModuleList(
-            nn.Linear(np.prod(pool_size) * final_n_channels, n_classes)
-            for _ in range(n_levels + 1)
-        )
         self.n_branches = n_branches
         self.n_levels = n_levels
-        self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
 
     def forward(self, t, lvls=None):
         if lvls is None:
@@ -605,16 +610,13 @@ class AlphaChannelReadoutModule(ReadoutModule):
             nodes = t[num_nodes(lvl - 1, self.n_branches): num_nodes(lvl, self.n_branches)]
             random.shuffle(nodes)
             for node in nodes:
-                fm, alpha = node.h
-                fm_accum = fm_accum * (1 - alpha) + fm * alpha
+                fm, alpha, _ = node.h
+                #fm_accum = fm_accum * (1 - alpha) + fm * alpha
+                fm_accum = fm_accum + fm
             batch_size = fm_accum.shape[0]
-            h_accum = self.avgpool(fm_accum).view(batch_size, -1)
+            h_accum = self.avgpool(fm_accum / num_nodes(lvl, self.n_branches)).view(batch_size, -1)
             h = h_accum
-            if self.share:
-                net_pred = self.predictor[0]
-            else:
-                net_pred = self.predictor[lvl]
-            results.append(net_pred(h))
+            results.append(h)
             hs.append(h)
             fm_accum.detach_()
 

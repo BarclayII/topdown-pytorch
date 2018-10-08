@@ -198,10 +198,13 @@ def train():
                     sample_alpha_arr = [
                         t[_].h[1][:10].detach() for _ in range(length)
                     ]
+                    sample_act_arr = [
+                        t[_].h[2][:10].detach() for _ in range(length)
+                    ]
                     sample_recon_arr = [
                         t[_].recon[:10].detach() for _ in range(length)
                     ]
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_alpha_arr, sample_recon_arr, 'train', writer,
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_alpha_arr, sample_act_arr, sample_recon_arr, 'train', writer,
                             y_pred_cls, y,
                             n_branches=n_branches, n_levels=n_levels)
 
@@ -268,10 +271,13 @@ def train():
                     sample_alpha_arr = [
                         t[_].h[1][:10].detach() for _ in range(length)
                     ]
+                    sample_act_arr = [
+                        t[_].h[2][:10].detach() for _ in range(length)
+                    ]
                     sample_recon_arr = [
                         t[_].recon[:10].detach() for _ in range(length)
                     ]
-                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_alpha_arr, sample_recon_arr, 'valid', writer,
+                    viz(epoch, sample_imgs, sample_bboxs, sample_g_arr, sample_alpha_arr, sample_act_arr, sample_recon_arr, 'valid', writer,
                             y_pred_cls, y,
                             n_branches=n_branches, n_levels=levels)
 

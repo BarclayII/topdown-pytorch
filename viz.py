@@ -20,11 +20,12 @@ def getclrs(n_branches, n_levels):
     return clrs
 
 
-def viz(epoch, imgs, bboxes, g_arr, alpha_arr, recon_arr, tag, writer, y_pred, y, n_branches=2, n_levels=2):
+def viz(epoch, imgs, bboxes, g_arr, alpha_arr, act_arr, recon_arr, tag, writer, y_pred, y, n_branches=2, n_levels=2):
     length = len(g_arr)
     statplot = StatPlot(5, 2)
     statplot_g_arr = [StatPlot(5, 2) for _ in range(length)]
     statplot_alpha_arr = [StatPlot(5, 2) for _ in range(length)]
+    statplot_act_arr = [StatPlot(5, 2) for _ in range(length)]
     statplot_recon_arr = [StatPlot(5, 2) for _ in range(length)]
 
     clrs = getclrs(n_branches, n_levels)
@@ -39,6 +40,7 @@ def viz(epoch, imgs, bboxes, g_arr, alpha_arr, recon_arr, tag, writer, y_pred, y
         for k in range(length):
             statplot_g_arr[k].add_image(g_arr[k][j].permute(1, 2, 0))
             statplot_alpha_arr[k].add_image(alpha_arr[k][j, 0])
+            statplot_act_arr[k].add_image(act_arr[k][j])
             statplot_recon_arr[k].add_image(recon_arr[k][j].permute(1, 2, 0))
 
     statplot_disp_g = StatPlot(5, 2)
@@ -58,5 +60,6 @@ def viz(epoch, imgs, bboxes, g_arr, alpha_arr, recon_arr, tag, writer, y_pred, y
     for k in range(length):
         writer.add_image('Image/{}/viz_glim_{}'.format(tag, k), fig_to_ndarray_tb(statplot_g_arr[k].fig), epoch)
         writer.add_image('Image/{}/viz_alpha_{}'.format(tag, k), fig_to_ndarray_tb(statplot_alpha_arr[k].fig), epoch)
+        writer.add_image('Image/{}/viz_act_{}'.format(tag, k), fig_to_ndarray_tb(statplot_act_arr[k].fig), epoch)
         writer.add_image('Image/{}/viz_recon_{}'.format(tag, k), fig_to_ndarray_tb(statplot_recon_arr[k].fig), epoch)
     plt.close('all')
