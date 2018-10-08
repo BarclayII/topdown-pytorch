@@ -251,10 +251,17 @@ class SequentialGlimpse(nn.Module):
         return gs
 
 class GlimpseUpdater(nn.Module):
-    def __init__(self, glimpse, input_dims, h_dims, g_dims, n_branches, n_levels):
+    def __init__(self, share, glimpse, input_dims, h_dims, g_dims, n_branches, n_levels):
         super(GlimpseUpdater, self).__init__()
         self.glimpse = glimpse
 
+        self.share = share
+        if share:
+            lvls = 1
+        else:
+            lvls = n_levels + 1
+
+        """
         self.net_b = nn.ModuleList(
                 nn.Sequential(
                     nn.Linear(input_dims, h_dims),
@@ -263,15 +270,16 @@ class GlimpseUpdater(nn.Module):
                     nn.ReLU(),
                     nn.Linear(h_dims, g_dims * n_branches),
                     )
-                for _ in range(n_levels + 1)
+                for _ in range(lvls)
         )
         """
+
         self.net_b = nn.ModuleList(
             #CommNet(2, n_branches, input_dims, h_dims, g_dims)
             SequentialGlimpse(input_dims, h_dims, g_dims, n_branches)
-            for _ in range(n_levels + 1)
+            for _ in range(lvls)
         )
-        """
+
         self.n_branches = n_branches
         self.g_dims = g_dims
 
@@ -279,7 +287,11 @@ class GlimpseUpdater(nn.Module):
         #fm, alpha = h
         fm = h
         batch_size, n_glimpses = fm.shape[:2]
-        delta_b = self.net_b[l](
+        if self.share:
+            net_b = self.net_b[0]
+        else:
+            net_b = self.net_b[l]
+        delta_b = net_b(
                 fm.detach().view(batch_size, n_glimpses, -1)
                 #fm.view(batch_size, n_glimpses, -1)
         ).view(batch_size, n_glimpses, self.n_branches, self.g_dims)
@@ -423,6 +435,7 @@ class TreeBuilder(nn.Module):
 
         net_h = InverseGlimpse(glimpse, final_pool_size, fm_target_size)
         upd_b = GlimpseUpdater(
+                share,
                 glimpse,
                 final_n_channels * np.prod(final_pool_size),
                 h_dims,
