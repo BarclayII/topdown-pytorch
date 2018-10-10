@@ -182,9 +182,10 @@ class WhatModule(nn.Module):
                     cnn.maxpool,
                     cnn.layer1,
                     cnn.layer2,
+            )
+            self.cnn_1 = nn.Sequential(
                     cnn.layer3,
                     cnn.layer4,
-                    nn.AdaptiveMaxPool2d(final_pool_size),
             )
         elif callable(cnn):
             self.cnn = cnn()
@@ -196,10 +197,12 @@ class WhatModule(nn.Module):
         batch_size = glimpse_kxk.shape[0]
         if self.fix:
             with T.no_grad():
-                fm = self.cnn(glimpse_kxk)
+                fm_pos = self.cnn(glimpse_kxk)
+                fm = self.cnn_1(fm_pos)
         else:
-            fm = self.cnn(glimpse_kxk)
-        return fm
+            fm_pos = self.cnn(glimpse_kxk)
+            fm = self.cnn_1(fm_pos)
+        return fm, fm_pos
 
 class InverseGlimpse(nn.Module):
     def __init__(self, glimpse_fm, final_pool_size, fm_target_size):
@@ -283,6 +286,11 @@ class GlimpseUpdater(nn.Module):
         self.n_branches = n_branches
         self.g_dims = g_dims
 
+    def normalize(self, v):
+        mean = v.mean(dim=-1, keepdim=True)
+        std = v.std(dim=-1, keepdim=True)
+        return (v - mean) / std
+
     def forward(self, b, h, l):
         #fm, alpha = h
         fm = h
@@ -292,7 +300,7 @@ class GlimpseUpdater(nn.Module):
         else:
             net_b = self.net_b[l]
         delta_b = net_b(
-                fm.detach().view(batch_size, n_glimpses, -1)
+                self.normalize(fm.detach().view(batch_size, n_glimpses, -1))
                 #fm.view(batch_size, n_glimpses, -1)
         ).view(batch_size, n_glimpses, self.n_branches, self.g_dims)
         delta_b = self.glimpse.rescale(delta_b)
@@ -437,7 +445,7 @@ class TreeBuilder(nn.Module):
         upd_b = GlimpseUpdater(
                 share,
                 glimpse,
-                final_n_channels * np.prod(final_pool_size),
+                512 * 13 * 13, #final_n_channels * np.prod(final_pool_size),
                 h_dims,
                 g_dims,
                 n_branches,
@@ -470,7 +478,7 @@ class TreeBuilder(nn.Module):
             phi = self.net_phi[0]
         else:
             phi = self.net_phi[l]
-        fm = phi(x_g_flat)
+        fm, fm_pos = phi(x_g_flat)
         if self.share:
             recon = self.net_recon[0]
         else:
@@ -479,10 +487,11 @@ class TreeBuilder(nn.Module):
         #loss_recon = F.l1_loss(x_recon.view(-1), x_g.view(-1).detach())
 
         fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
+        fm_pos = fm_pos.view(batch_size, n_glimpses, *fm_pos.shape[1:])
         h = self.net_h(fm, b)
         new_b = None
         if l < self.n_levels:
-            new_b = self.upd_b(b, fm, l)
+            new_b = self.upd_b(b, fm_pos, l)
         return x_g, new_b, h, 0, x_g #loss_recon, x_recon.view_as(x_g)
 
     def forward(self, x, lvl=None):
@@ -680,7 +689,7 @@ class GatedBranchReadoutModule(ReadoutModule):
             )
         self.n_branches = n_branches
         self.n_levels = n_levels
-        self.pool = nn.AdaptiveMaxPool2d((1, 1))
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, t, lvls=None):
         if lvls is None:
@@ -720,7 +729,7 @@ class GatedBranchReadoutModule(ReadoutModule):
             gh = (g_score * h_lvl).sum(1)   # weighted average of features on level @lvl
             h_list.append(gh)
 
-            gh_all, _ = T.stack(h_list, 1).max(1)   # avg-pool over the weighted averages
+            gh_all = T.stack(h_list, 1).mean(1)   # avg-pool over the weighted averages
             results.append(self.predictor[lvl](gh_all))
             hs.append(gh_all)
             h_list[-1].detach_()
