@@ -336,6 +336,7 @@ def train():
             T.save(readout.state_dict(), 'checkpoints/{}_readout_best.pt'.format(expr_setting))
             best_epoch[lvl_turn] = epoch
         elif (best_epoch[lvl_turn] <= epoch - 10 or epoch == n_epochs - 1) and test_loader is not None:
+            """
             print('Early Stopping on level {}...'.format(lvl_turn))
             opt_params = OPTIM_PARAMS[args.dataset]
             opt = create_optim(
@@ -353,7 +354,9 @@ def train():
             lvl_turn += 1
             builder.load_state_dict(T.load('checkpoints/{}_builder_best.pt'.format(expr_setting)))
             readout.load_state_dict(T.load('checkpoints/{}_readout_best.pt'.format(expr_setting)))
-            if lvl_turn == n_levels + 1:
+            """
+            if True:
+            #if lvl_turn == n_levels + 1:
                 cnt = 0
                 hit = 0
                 levelwise_hit = np.zeros(n_levels + 1)

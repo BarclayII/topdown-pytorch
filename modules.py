@@ -723,7 +723,7 @@ class GatedBranchReadoutModule(ReadoutModule):
             gh_all, _ = T.stack(h_list, 1).max(1)   # avg-pool over the weighted averages
             results.append(self.predictor[lvl](gh_all))
             hs.append(gh_all)
-            h_list[-1].detach_()
+            #h_list[-1].detach_()
 
         self.hs = hs
         self.gs = g_list
