@@ -222,7 +222,7 @@ class InverseGlimpse(nn.Module):
     def forward(self, fm, b):
         abs_b = self.resize(b)
         fm_new, fm_alpha = F_spatial_feature_map(fm, abs_b, self.fm_target_size)
-        return fm_new, fm_alpha
+        return fm_new, fm_alpha, fm
 
 class SequentialGlimpse(nn.Module):
     def __init__(self, input_dims, h_dims, g_dims, n_branches):
@@ -605,7 +605,7 @@ class AlphaChannelReadoutModule(ReadoutModule):
             nodes = t[num_nodes(lvl - 1, self.n_branches): num_nodes(lvl, self.n_branches)]
             random.shuffle(nodes)
             for node in nodes:
-                fm, alpha = node.h
+                fm, alpha, _ = node.h
                 fm_accum = fm_accum * (1 - alpha) + fm * alpha
             batch_size = fm_accum.shape[0]
             h_accum = self.avgpool(fm_accum).view(batch_size, -1)
@@ -647,7 +647,7 @@ class NodewiseMaxPoolingReadoutModule(ReadoutModule):
         results = []
         hs = []
 
-        fm, alpha = zip(*[node.h for node in t])
+        fm_new, alpha, fm = zip(*[node.h for node in t])
         fm = T.stack(fm, 1)
         batch_size, n_nodes, n_channels, fm_rows, fm_cols = fm.shape
         fm = self.pool(fm.view(batch_size * n_nodes, n_channels, fm_rows, fm_cols))
@@ -693,7 +693,7 @@ class GatedBranchReadoutModule(ReadoutModule):
         hs = []
         n_lvl_nodes = [0] + [num_nodes(lvl, self.n_branches) for lvl in range(lvls + 1)]
 
-        fm, alpha = zip(*[node.h for node in t])
+        fm_new, alpha, fm = zip(*[node.h for node in t])
         fm = T.stack(fm, 1)
         batch_size, n_nodes, n_channels, fm_rows, fm_cols = fm.shape
 
