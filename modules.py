@@ -529,7 +529,7 @@ class ReadoutModule(nn.Module):
         raise NotImplementedError
 
 class UnlinearReadoutModule(ReadoutModule):
-    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=4, n_levels=1, share=False):
+    def __init__(self, h_dims=256, g_dims=6, final_n_channels=256, n_classes=10, n_branches=4, n_levels=1, share=False):
         super(UnlinearReadoutModule, self).__init__()
         pool_size = 1
         self.linear_fm = nn.ModuleList(
@@ -541,7 +541,7 @@ class UnlinearReadoutModule(ReadoutModule):
             for _ in range(n_levels + 1)
         )
         self.predictor = nn.ModuleList(
-            nn.Linear(h_dims, n_classes)
+            nn.Linear(2 * h_dims, n_classes)
             for _ in range(n_levels + 1)
         )
         self.n_branches = n_branches
@@ -557,18 +557,19 @@ class UnlinearReadoutModule(ReadoutModule):
         for lvl in range(lvls + 1):
             nodes = t[num_nodes(lvl - 1, self.n_branches): num_nodes(lvl, self.n_branches)]
             for node in nodes:
-                fm, alpha = node.h
+                fm_new, alpha, fm = node.h
                 b = node.b.detach()
                 batch_size = fm.shape[0]
                 fm = self.avgpool(fm).view(batch_size, -1)
-                h = T.tanh(
-                    self.linear_fm[lvl](fm) +
-                    self.linear_g[lvl](b)
-                )
+                h = T.relu(T.cat([
+                    self.linear_fm[lvl](fm),
+                    self.linear_g[lvl](b)],
+                    dim=-1
+                ))
 
                 h_accum += h
 
-            h = h_accum / len(nodes)
+            h = h_accum / num_nodes(lvl, self.n_branches)
             if self.share:
                 net_pred = self.predictor[0]
             else:
@@ -666,17 +667,13 @@ class NodewiseMaxPoolingReadoutModule(ReadoutModule):
 class GatedBranchReadoutModule(ReadoutModule):
     def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1, share=False):
         super().__init__()
-        self.projector = nn.Linear(final_n_channels, h_dims)
         self.predictor = nn.ModuleList(
-                nn.Sequential(
-                    nn.Linear(h_dims, h_dims),
-                    nn.ReLU(),
-                    nn.Linear(h_dims, n_classes),
-                ) for _ in range(n_levels + 1)
-            )
+            nn.Linear(final_n_channels, n_classes)
+            for _ in range(n_levels + 1)
+        )
         self.gater = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(h_dims, h_dims),
+                    nn.Linear(final_n_channels, h_dims),
                     nn.ReLU(),
                     nn.Linear(h_dims, 1),
                 ) for _ in range(n_levels + 1)
@@ -698,7 +695,7 @@ class GatedBranchReadoutModule(ReadoutModule):
         batch_size, n_nodes, n_channels, fm_rows, fm_cols = fm.shape
 
         fm = self.pool(fm.view(batch_size * n_nodes, n_channels, fm_rows, fm_cols))
-        h = self.projector(fm.view(batch_size, n_nodes, n_channels))
+        h = fm.view(batch_size, n_nodes, n_channels)
 
         g_list = []
         h_list = []
@@ -723,9 +720,10 @@ class GatedBranchReadoutModule(ReadoutModule):
             gh = (g_score * h_lvl).sum(1)   # weighted average of features on level @lvl
             h_list.append(gh)
 
-            gh_all, _ = T.stack(h_list, 1).max(1)   # max-pool over the weighted averages
+            gh_all, _ = T.stack(h_list, 1).max(1)   # avg-pool over the weighted averages
             results.append(self.predictor[lvl](gh_all))
             hs.append(gh_all)
+            h_list[-1].detach_()
 
         self.hs = hs
         self.gs = g_list

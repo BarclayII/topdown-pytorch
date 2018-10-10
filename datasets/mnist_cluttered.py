@@ -37,8 +37,12 @@ def placeSpriteRandomly(obs, sprite, border, idx=0, n=1):
     spriteH = sprite.size(0)
     spriteW = sprite.size(1)
 
-    y = np.random.randint(border, h - spriteH - border)
-    x = np.random.randint(border, w - spriteW - border)
+    min_h = (h // n) * idx
+    max_h = (h // n) * (idx + 1)
+    min_w = 0
+    max_w = w
+    y = np.random.randint(min_h + border, max_h - spriteH - border)
+    x = np.random.randint(min_w + border, max_w - spriteW - border)
 
     subTensor = obs[y: y + spriteH, x: x + spriteW]
     subTensor += sprite

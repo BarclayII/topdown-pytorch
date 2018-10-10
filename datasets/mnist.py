@@ -165,7 +165,7 @@ class MNISTMulti(Dataset):
                             range(n_samples * j, n_samples * (j + 1)), perm):
                         cur_rows = RNG.randint(self.size_min, self.size_max)
                         cur_cols = RNG.randint(self.size_min, self.size_max)
-                        row = RNG.randint(image_rows - cur_rows)
+                        row = RNG.randint(digit_row * i, digit_row * (i + 1) - cur_rows)
                         col = RNG.randint(image_cols - cur_cols)
                         cur_data = T.from_numpy(
                                 cv2.resize(
