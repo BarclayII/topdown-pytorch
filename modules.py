@@ -182,6 +182,8 @@ class WhatModule(nn.Module):
                     cnn.maxpool,
                     cnn.layer1,
                     cnn.layer2,
+            )
+            self.cnn_1 = nn.Sequential(
                     cnn.layer3,
                     cnn.layer4,
                     nn.AdaptiveMaxPool2d(final_pool_size),
@@ -196,10 +198,12 @@ class WhatModule(nn.Module):
         batch_size = glimpse_kxk.shape[0]
         if self.fix:
             with T.no_grad():
-                fm = self.cnn(glimpse_kxk)
+                fm_pos = self.cnn(glimpse_kxk)
+                fm = self.cnn_1(fm_pos)
         else:
-            fm = self.cnn(glimpse_kxk)
-        return fm
+            fm_pos = self.cnn(glimpse_kxk)
+            fm = self.cnn_1(fm_pos)
+        return fm, fm_pos
 
 class InverseGlimpse(nn.Module):
     def __init__(self, glimpse_fm, final_pool_size, fm_target_size):
@@ -437,8 +441,8 @@ class TreeBuilder(nn.Module):
         upd_b = GlimpseUpdater(
                 share,
                 glimpse,
-                final_n_channels * np.prod(final_pool_size),
-                h_dims,
+                512 * 13 * 13, #final_n_channels * np.prod(final_pool_size),
+                128,
                 g_dims,
                 n_branches,
                 n_levels
@@ -470,7 +474,7 @@ class TreeBuilder(nn.Module):
             phi = self.net_phi[0]
         else:
             phi = self.net_phi[l]
-        fm = phi(x_g_flat)
+        fm, fm_pos = phi(x_g_flat)
         if self.share:
             recon = self.net_recon[0]
         else:
@@ -479,10 +483,11 @@ class TreeBuilder(nn.Module):
         #loss_recon = F.l1_loss(x_recon.view(-1), x_g.view(-1).detach())
 
         fm = fm.view(batch_size, n_glimpses, *fm.shape[1:])
+        fm_pos = fm_pos.view(batch_size, n_glimpses, *fm_pos.shape[1:])
         h = self.net_h(fm, b)
         new_b = None
         if l < self.n_levels:
-            new_b = self.upd_b(b, fm, l)
+            new_b = self.upd_b(b, fm_pos, l)
         return x_g, new_b, h, 0, x_g #loss_recon, x_recon.view_as(x_g)
 
     def forward(self, x, lvl=None):
