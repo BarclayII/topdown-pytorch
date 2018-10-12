@@ -42,7 +42,6 @@ NETWORK_PARAMS = {
     'bird': {
         'fm_target_size': (16, 16),
         'final_pool_size': (4, 4),
-        #'final_pool_size': (10, 10),
         'final_n_channels': 2048,
         'n_classes': 200,
         'cnn': 'resnet50',

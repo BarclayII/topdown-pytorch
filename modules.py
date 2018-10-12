@@ -97,7 +97,10 @@ def build_cnn(**config):
         cnn_list.append(nn.BatchNorm2d(filters[i]))
         if i < len(filters) - 1:
             cnn_list.append(nn.LeakyReLU())
-    cnn_list.append(nn.AdaptiveAvgPool2d(final_pool_size))
+    #cnn_list.append(nn.AdaptiveAvgPool2d(final_pool_size))
+    cnn_list.append(nn.AdaptiveMaxPool2d(final_pool_size))
+
+
 
     return nn.Sequential(*cnn_list)
 
@@ -155,8 +158,6 @@ class ReconstructionModule(nn.Module):
                 decoder_list.append(nn.BatchNorm2d(out_channel))
                 decoder_list.append(nn.ReLU(True))
                 in_channel = out_channel
-        # decoder_list.append(nn.Sigmoid())
-        # decoder_list.append(nn.Tanh())
         self.decoder = nn.Sequential(*decoder_list)
 
     def forward(self, fm):
@@ -184,7 +185,6 @@ class WhatModule(nn.Module):
                     cnn.layer2,
                     cnn.layer3,
                     cnn.layer4,
-                    nn.AdaptiveMaxPool2d(final_pool_size),
             )
         elif callable(cnn):
             self.cnn = cnn()
@@ -283,6 +283,11 @@ class GlimpseUpdater(nn.Module):
         self.n_branches = n_branches
         self.g_dims = g_dims
 
+    def normalize(self, v):
+        v_mean = v.mean(dim=-1, keepdim=True)
+        v_std = v.std(dim=-1, keepdim=True)
+        return (v - v_mean) / v_std
+
     def forward(self, b, h, l):
         #fm, alpha = h
         fm = h
@@ -292,8 +297,8 @@ class GlimpseUpdater(nn.Module):
         else:
             net_b = self.net_b[l]
         delta_b = net_b(
-                fm.detach().view(batch_size, n_glimpses, -1)
-                #fm.view(batch_size, n_glimpses, -1)
+                self.normalize(fm.detach().view(batch_size, n_glimpses, -1))
+                #fm.detach().view(batch_size, n_glimpses, -1)
         ).view(batch_size, n_glimpses, self.n_branches, self.g_dims)
         delta_b = self.glimpse.rescale(delta_b)
         new_b = self.glimpse.upd_b(b.unsqueeze(2).repeat(1, 1, self.n_branches, 1), delta_b)
@@ -418,7 +423,6 @@ class TreeBuilder(nn.Module):
 
         fm_glim_size = final_pool_size
         glimpse = create_glimpse(glimpse_type, glimpse_size, explore=explore, bind=bind)
-        #glimpse_fm = create_glimpse(glimpse_type, final_pool_size) #fm_glim_size)
         g_dims = glimpse.att_params
 
         net_phi = nn.ModuleList(
@@ -581,6 +585,43 @@ class UnlinearReadoutModule(ReadoutModule):
         self.hs = hs
         return results
 
+class MeanReadoutModule(ReadoutModule):
+    def __init__(self, h_dims=128, g_dims=6, final_n_channels=256, n_classes=10, n_branches=1, n_levels=1, share=False):
+        super(MeanReadoutModule, self).__init__()
+        pool_size = 1
+        self.predictor = nn.ModuleList(
+            nn.Linear(np.prod(pool_size) * final_n_channels, n_classes)
+            for _ in range(n_levels + 1)
+        )
+        self.n_branches = n_branches
+        self.n_levels = n_levels
+        self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
+
+    def forward(self, t, lvls=None):
+        if lvls is None:
+            lvls = self.n_levels
+
+        results = []
+        hs = []
+        fm_accum = 0
+        for lvl in range(lvls + 1):
+            nodes = t[num_nodes(lvl - 1, self.n_branches): num_nodes(lvl, self.n_branches)]
+            for node in nodes:
+                _, _, fm = node.h
+                batch_size = fm.shape[0]
+                fm_accum += self.avgpool(fm).view(batch_size, -1)
+            h = fm_accum / num_nodes(lvl, self.n_branches)
+            if self.share:
+                net_pred = self.predictor[0]
+            else:
+                net_pred = self.predictor[lvl]
+            results.append(net_pred(h))
+            hs.append(h)
+            fm_accum.detach_()
+        
+        self.hs = hs
+        return results
+
 class AlphaChannelReadoutModule(ReadoutModule):
     '''
     Only works when using inverse glimpse (i.e. have fm and alpha channels)
@@ -712,16 +753,16 @@ class GatedBranchReadoutModule(ReadoutModule):
                 g_score = F.softmax(g_score, 2).view(batch_size, n_other_nodes, 1)
                 g_score = T.unbind(g_score, 1)
                 # multiply the gate value of their parents
-                g_score = [g_score[_i] * g_list[(i - 1) // self.n_branches]
+                g_score = [g_score[_i] * g_list[(i - 1) // self.n_branches].detach()
                            for _i, i in enumerate(range(n_lvl_nodes[lvl], n_lvl_nodes[lvl+1]))]
                 g_list.extend(g_score)
                 g_score = T.stack(g_score, 1)
 
-            gh = (g_score * h_lvl).sum(1)   # weighted average of features on level @lvl
+            gh = self.predictor[lvl](g_score * h_lvl).sum(1)   # weighted average of features on level @lvl
             h_list.append(gh)
 
-            gh_all, _ = T.stack(h_list, 1).max(1)   # avg-pool over the weighted averages
-            results.append(self.predictor[lvl](gh_all))
+            gh_all = T.stack(h_list, 1).mean(1)   # avg-pool over the weighted averages
+            results.append(gh_all)
             hs.append(gh_all)
             h_list[-1].detach_()
 
@@ -734,6 +775,8 @@ def create_readout(mode, **kwargs):
         return AlphaChannelReadoutModule(**kwargs)
     elif mode == 'max':
         return NodewiseMaxPoolingReadoutModule(**kwargs)
+    elif mode == 'mean':
+        return MeanReadoutModule(**kwargs)
     elif mode == 'unlinear':
         return UnlinearReadoutModule(**kwargs)
     elif mode == 'maxgated':
