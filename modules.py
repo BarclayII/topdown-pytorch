@@ -721,7 +721,7 @@ class GatedBranchReadoutModule(ReadoutModule):
             )
         self.n_branches = n_branches
         self.n_levels = n_levels
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.pool = nn.AdaptiveMaxPool2d((1, 1))
 
     def forward(self, t, lvls=None):
         if lvls is None:
@@ -753,16 +753,16 @@ class GatedBranchReadoutModule(ReadoutModule):
                 g_score = F.softmax(g_score, 2).view(batch_size, n_other_nodes, 1)
                 g_score = T.unbind(g_score, 1)
                 # multiply the gate value of their parents
-                g_score = [g_score[_i] * g_list[(i - 1) // self.n_branches]
+                g_score = [g_score[_i] * g_list[(i - 1) // self.n_branches].detach()
                            for _i, i in enumerate(range(n_lvl_nodes[lvl], n_lvl_nodes[lvl+1]))]
                 g_list.extend(g_score)
                 g_score = T.stack(g_score, 1)
 
-            gh = (g_score * h_lvl).sum(1)   # weighted average of features on level @lvl
+            gh = self.predictor[lvl](g_score * h_lvl).sum(1)   # weighted average of features on level @lvl
             h_list.append(gh)
 
             gh_all = T.stack(h_list, 1).mean(1)   # avg-pool over the weighted averages
-            results.append(self.predictor[lvl](gh_all))
+            results.append(gh_all)
             hs.append(gh_all)
             h_list[-1].detach_()
 
