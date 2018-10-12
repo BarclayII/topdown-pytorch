@@ -183,12 +183,12 @@ class GaussianGlimpse(NN.Module):
         d_dy = delta_b[..., 3]
         d_sx = delta_b[..., 4]
         d_sy = delta_b[..., 5]
-        cx = b[..., 0]
-        cy = b[..., 1]
-        dx = b[..., 2]
-        dy = b[..., 3]
-        sx = b[..., 4]
-        sy = b[..., 5]
+        cx = b[..., 0].detach()
+        cy = b[..., 1].detach()
+        dx = b[..., 2].detach()
+        dy = b[..., 3].detach()
+        sx = b[..., 4].detach()
+        sy = b[..., 5].detach()
         return T.stack([
             cx + d_cx * (1 - d_dx) * dx,
             cy + d_cy * (1 - d_dy) * dy,
