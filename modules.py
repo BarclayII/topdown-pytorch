@@ -721,7 +721,7 @@ class GatedBranchReadoutModule(ReadoutModule):
             )
         self.n_branches = n_branches
         self.n_levels = n_levels
-        self.pool = nn.AdaptiveMaxPool2d((1, 1))
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, t, lvls=None):
         if lvls is None:
